@@ -1,0 +1,6 @@
+{
+  "name": "Tank Arena: Public Battlefield",
+  "description": "Trò chơi bắn xe tăng online nhiều người chơi trên một chiến trường công cộng với hệ thống vũ khí, chướng ngại vật và bảng điểm trực tiếp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
