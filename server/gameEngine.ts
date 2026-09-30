@@ -14,6 +14,9 @@ import {
   SkillType,
   Landmine,
   TankSkillState,
+  PerkId,
+  PerkCard,
+  ALL_PERK_CARDS,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
@@ -361,6 +364,11 @@ export class GameEngine {
         barrageUntil: 0,
         barrageCooldownUntil: 0,
       },
+      level: 1,
+      exp: 0,
+      maxExp: 100,
+      perks: [],
+      pendingPerkChoices: [],
     };
 
     this.tanks.set(id, tank);
@@ -504,7 +512,9 @@ export class GameEngine {
     const spawn = this.findSafeSpawnPosition();
     tank.x = spawn.x;
     tank.y = spawn.y;
-    tank.hp = stats.maxHp;
+    const extraHp = tank.perks.includes('HEAVY_HULL') ? 30 : 0;
+    tank.maxHp = stats.maxHp + extraHp;
+    tank.hp = tank.maxHp;
     tank.shield = 0;
     tank.isDead = false;
     tank.respawnCountdown = 0;
@@ -520,6 +530,83 @@ export class GameEngine {
       barrageUntil: 0,
       barrageCooldownUntil: 0,
     };
+  }
+
+  public addTankExp(tank: PlayerTank, expGained: number) {
+    if (tank.isDead) return;
+
+    tank.exp += expGained;
+
+    while (tank.exp >= tank.maxExp && tank.level < 10) {
+      tank.exp -= tank.maxExp;
+      tank.level += 1;
+      tank.maxExp = Math.floor(tank.maxExp * 1.45);
+
+      // Level up heal bonus +35% HP
+      const healBonus = Math.floor(tank.maxHp * 0.35);
+      tank.hp = Math.min(tank.maxHp, tank.hp + healBonus);
+
+      // Generate 3 random perks that tank doesn't have yet
+      const availableCards = Object.values(ALL_PERK_CARDS).filter(
+        (card) => !tank.perks.includes(card.id)
+      );
+
+      if (availableCards.length > 0) {
+        // Shuffle and pick up to 3
+        const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
+        const choices = shuffled.slice(0, Math.min(3, shuffled.length));
+
+        if (tank.isBot) {
+          // Bot automatically picks the first perk card!
+          const chosen = choices[0];
+          if (chosen) {
+            tank.perks.push(chosen.id);
+            if (chosen.id === 'HEAVY_HULL') {
+              tank.maxHp += 30;
+              tank.hp += 30;
+            }
+          }
+          tank.pendingPerkChoices = [];
+        } else {
+          tank.pendingPerkChoices = choices;
+        }
+      }
+
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `⚡ [THĂNG CẤP] ${tank.name} đã vươn lên CẤP MỚI LEVEL ${tank.level}!`,
+        timestamp: Date.now(),
+        color: '#f59e0b',
+      });
+    }
+  }
+
+  public selectPerk(playerId: string, perkId: PerkId): boolean {
+    const tank = this.tanks.get(playerId);
+    if (!tank || tank.isDead) return false;
+
+    const perkCard = ALL_PERK_CARDS[perkId];
+    if (!perkCard) return false;
+
+    if (!tank.perks.includes(perkId)) {
+      tank.perks.push(perkId);
+      if (perkId === 'HEAVY_HULL') {
+        tank.maxHp += 30;
+        tank.hp += 30;
+      }
+      tank.pendingPerkChoices = [];
+
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `🌟 [MỞ KHÓA KỸ NĂNG] ${tank.name} đã mở khóa [${perkCard.vietnameseName}]!`,
+        timestamp: Date.now(),
+        color: perkCard.color,
+      });
+      return true;
+    }
+    return false;
   }
 
   public addChatMessage(senderId: string, text: string): ChatMessage | null {

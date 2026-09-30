@@ -24,6 +24,7 @@ import {
   WEATHER_CYCLE,
   SkillType,
   Landmine,
+  PerkId,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -37,6 +38,7 @@ import { SpectatorHUD } from './components/SpectatorHUD';
 import { HelpModal } from './components/HelpModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
 import { SkillBarHUD } from './components/SkillBarHUD';
+import { PerkSelectModal } from './components/PerkSelectModal';
 import { sounds } from './utils/audio';
 import {
   Volume2,
@@ -64,6 +66,7 @@ import {
   Swords,
   Video,
   Crosshair,
+  AlertTriangle,
 } from 'lucide-react';
 
 export default function App() {
@@ -186,6 +189,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // AFK Tab-out notice state
+  const [afkNotice, setAfkNotice] = useState<string | null>(null);
+
   // Auto-dismiss weather change announcement banner after 5 seconds
   useEffect(() => {
     if (weatherToast) {
@@ -195,6 +201,73 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [weatherToast]);
+
+  // 30-Second Tab-Out / Window Blur Auto-Kick Protection
+  const afkTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!isInGame) {
+      if (afkTimerRef.current) {
+        clearTimeout(afkTimerRef.current);
+        afkTimerRef.current = null;
+      }
+      return;
+    }
+
+    const startAfkCountdown = () => {
+      if (!afkTimerRef.current) {
+        afkTimerRef.current = setTimeout(() => {
+          setIsInGame(false);
+          setAfkNotice('⚠️ Bạn đã bị ngắt kết nối về Sảnh chờ do chuyển tab / rời cửa sổ game quá 30 giây!');
+          sounds.playExplosion();
+          afkTimerRef.current = null;
+        }, 30000); // 30 seconds
+      }
+    };
+
+    const cancelAfkCountdown = () => {
+      if (afkTimerRef.current) {
+        clearTimeout(afkTimerRef.current);
+        afkTimerRef.current = null;
+        setWeatherToast({
+          name: 'CẢNH BÁO HOẠT ĐỘNG',
+          icon: '⚠️',
+          description: 'Bạn vừa quay lại tab game! Nếu rời tab quá 30 giây sẽ tự động ngắt kết nối.',
+          themeColor: '#f59e0b',
+        });
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        startAfkCountdown();
+      } else {
+        cancelAfkCountdown();
+      }
+    };
+
+    const handleBlur = () => {
+      startAfkCountdown();
+    };
+
+    const handleFocus = () => {
+      cancelAfkCountdown();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+      if (afkTimerRef.current) {
+        clearTimeout(afkTimerRef.current);
+        afkTimerRef.current = null;
+      }
+    };
+  }, [isInGame]);
 
   const handleManualSwitchWeather = () => {
     setCurrentWeatherIndex((oldIdx) => {
@@ -419,6 +492,17 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [isInGame, sendInput]);
+
+  const handleSelectPerk = useCallback((perkId: PerkId) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: 'SELECT_PERK',
+          perkId,
+        })
+      );
+    }
+  }, []);
 
   // Handle Keyboard Input
   useEffect(() => {
@@ -1421,20 +1505,50 @@ export default function App() {
               myPlayerName={myTank?.name || profileRef.current.name}
               myPlayerId={myPlayerId}
             />
+
+            {/* Roguelike Level Up Perk Choice Modal Overlay */}
+            {myTank && myTank.pendingPerkChoices && myTank.pendingPerkChoices.length > 0 && !isSpectator && (
+              <PerkSelectModal
+                level={myTank.level || 1}
+                perkChoices={myTank.pendingPerkChoices}
+                onSelectPerk={handleSelectPerk}
+              />
+            )}
           </>
         )}
       </div>
 
       {/* 3. Lobby / Tank Selection Modal */}
       {!isInGame && (
-        <LobbyModal
-          onJoin={handleJoinGame}
-          onlineCount={lobbyInfo.publicOnlineCount}
-          isSocketConnected={isSocketConnected}
-          publicPlayers={lobbyInfo.publicPlayers}
-          initialMode={gameMode}
-          currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
-        />
+        <>
+          {/* AFK Kicked Notice Banner */}
+          {afkNotice && (
+            <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
+              <div className="flex items-center justify-between gap-3 bg-slate-950/95 border-2 border-rose-500 text-white p-3.5 rounded-2xl shadow-2xl backdrop-blur-md">
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 animate-bounce" />
+                  <span className="text-xs font-bold leading-snug text-rose-200">{afkNotice}</span>
+                </div>
+                <button
+                  onClick={() => setAfkNotice(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0"
+                  title="Đóng thông báo"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          <LobbyModal
+            onJoin={handleJoinGame}
+            onlineCount={lobbyInfo.publicOnlineCount}
+            isSocketConnected={isSocketConnected}
+            publicPlayers={lobbyInfo.publicPlayers}
+            initialMode={gameMode}
+            currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
+          />
+        </>
       )}
 
       {/* 4. Controls & Help Modal */}

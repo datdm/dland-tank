@@ -237,6 +237,13 @@ async function startServer() {
             }
             break;
           }
+
+          case 'SELECT_PERK': {
+            if (currentRoom && msg.perkId) {
+              currentRoom.game.selectPerk(playerId, msg.perkId);
+            }
+            break;
+          }
         }
       } catch (err) {
         console.error('Error handling WS message:', err);

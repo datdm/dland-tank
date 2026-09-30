@@ -80,6 +80,110 @@ export interface Landmine {
   expiresAt: number;
 }
 
+export type PerkId =
+  | 'VAMPIRISM'
+  | 'ARMOR_PIERCING'
+  | 'THORNS_ARMOR'
+  | 'HEAVY_HULL'
+  | 'RAPID_RELOAD'
+  | 'BLAST_RADIUS'
+  | 'NITRO_ENGINE'
+  | 'EVASION_MATRIX';
+
+export interface PerkCard {
+  id: PerkId;
+  name: string;
+  vietnameseName: string;
+  icon: string;
+  description: string;
+  badge: string;
+  color: string;
+  themeGradient: string;
+}
+
+export const ALL_PERK_CARDS: Record<PerkId, PerkCard> = {
+  VAMPIRISM: {
+    id: 'VAMPIRISM',
+    name: 'Vampirism',
+    vietnameseName: 'Hút Máu Lương Duyên',
+    icon: '🩸',
+    description: 'Hồi lại 15% lượng sát thương gây ra cho kẻ địch thành máu cho xe tăng của bạn.',
+    badge: '+15% HÚT MÁU',
+    color: '#ef4444',
+    themeGradient: 'from-rose-900/90 via-red-950 to-slate-950 border-rose-500/80 shadow-rose-500/30',
+  },
+  ARMOR_PIERCING: {
+    id: 'ARMOR_PIERCING',
+    name: 'Armor Piercing',
+    vietnameseName: 'Đạn Xuyên Phá Cường Hóa',
+    icon: '🏹',
+    description: 'Đạn bay xuyên qua bụi rậm và xuyên qua 1 lớp chướng ngại vật mỏng.',
+    badge: 'ĐẠN XUYÊN TƯỜNG',
+    color: '#10b981',
+    themeGradient: 'from-emerald-900/90 via-teal-950 to-slate-950 border-emerald-500/80 shadow-emerald-500/30',
+  },
+  THORNS_ARMOR: {
+    id: 'THORNS_ARMOR',
+    name: 'Thorns Armor',
+    vietnameseName: 'Giáp Gai Phản Đòn',
+    icon: '🛡️',
+    description: 'Phản lại 20% sát thương nhận vào từ đạn kẻ địch trực tiếp cho kẻ tấn công.',
+    badge: 'PHẢN 20% SÁT THƯƠNG',
+    color: '#f59e0b',
+    themeGradient: 'from-amber-900/90 via-orange-950 to-slate-950 border-amber-500/80 shadow-amber-500/30',
+  },
+  HEAVY_HULL: {
+    id: 'HEAVY_HULL',
+    name: 'Reinforced Hull',
+    vietnameseName: 'Thân Xe Bọc Thép',
+    icon: '🚜',
+    description: '+30 Max HP ngay lập tức và tự động hồi máu ngoài giao tranh (+3 HP/giây).',
+    badge: '+30 MAX HP & HỒI MÁU',
+    color: '#38bdf8',
+    themeGradient: 'from-sky-900/90 via-blue-950 to-slate-950 border-sky-500/80 shadow-sky-500/30',
+  },
+  RAPID_RELOAD: {
+    id: 'RAPID_RELOAD',
+    name: 'Rapid Reload',
+    vietnameseName: 'Nạp Đạn Thần Tốc',
+    icon: '⚡',
+    description: 'Giảm 20% thời gian nạp đạn bắn pháo và giảm hồi chiêu tất cả kỹ năng.',
+    badge: '-20% THỜI GIAN NẠP',
+    color: '#eab308',
+    themeGradient: 'from-yellow-900/90 via-amber-950 to-slate-950 border-yellow-500/80 shadow-yellow-500/30',
+  },
+  BLAST_RADIUS: {
+    id: 'BLAST_RADIUS',
+    name: 'Blast Radius',
+    vietnameseName: 'Đạn Nổ Diện Rộng',
+    icon: '💥',
+    description: '+35% Bán kính nổ đạn diện rộng & +12% Sát thương đạn pháo.',
+    badge: '+35% BÁN KÍNH NỔ',
+    color: '#f97316',
+    themeGradient: 'from-orange-900/90 via-red-950 to-slate-950 border-orange-500/80 shadow-orange-500/30',
+  },
+  NITRO_ENGINE: {
+    id: 'NITRO_ENGINE',
+    name: 'Nitro Engine',
+    vietnameseName: 'Động Cơ Siêu Tốc',
+    icon: '🏎️',
+    description: '+22% Tốc độ di chuyển thân xe tăng, di chuyển linh hoạt vượt trội.',
+    badge: '+22% TỐC ĐỘ XE',
+    color: '#a855f7',
+    themeGradient: 'from-purple-900/90 via-fuchsia-950 to-slate-950 border-purple-500/80 shadow-purple-500/30',
+  },
+  EVASION_MATRIX: {
+    id: 'EVASION_MATRIX',
+    name: 'Evasion Matrix',
+    vietnameseName: 'Lưới Né Đạn Cyber',
+    icon: '🔮',
+    description: '15% Tỷ lệ né tránh hoàn toàn đạn bắn từ đối thủ, không tốn chút HP nào.',
+    badge: '15% NÉ ĐẠN',
+    color: '#06b6d4',
+    themeGradient: 'from-cyan-900/90 via-teal-950 to-slate-950 border-cyan-500/80 shadow-cyan-500/30',
+  },
+};
+
 export interface PlayerTank {
   id: string;
   name: string;
@@ -111,6 +215,12 @@ export interface PlayerTank {
   slowUntil?: number;
   burnUntil?: number;
   skills?: TankSkillState;
+  level: number;
+  exp: number;
+  maxExp: number;
+  perks: PerkId[];
+  pendingPerkChoices?: PerkCard[];
+  lastDamagedTime?: number;
 }
 
 export interface Bullet {
@@ -235,7 +345,8 @@ export type ClientMessage =
     }
   | { type: 'CHAT'; text: string }
   | { type: 'PING'; timestamp: number }
-  | { type: 'TOGGLE_BOTS'; count?: number };
+  | { type: 'TOGGLE_BOTS'; count?: number }
+  | { type: 'SELECT_PERK'; perkId: PerkId };
 
 export type ServerMessage =
   | {

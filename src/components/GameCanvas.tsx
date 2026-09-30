@@ -1142,11 +1142,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
 
+          const lvlTag = `[LV.${tank.level || 1}]`;
           if (tank.id === myPlayerId) {
             ctx.fillStyle = '#38bdf8';
             ctx.strokeStyle = '#020617';
             ctx.lineWidth = 3;
-            const displayName = `[BẠN] 🎯 ${tank.name}`;
+            const displayName = `${lvlTag} [BẠN] 🎯 ${tank.name}`;
             ctx.strokeText(displayName, 0, barY - 5);
             ctx.fillText(displayName, 0, barY - 5);
           } else if (!tank.isBot) {
@@ -1154,7 +1155,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#34d399';
             ctx.strokeStyle = '#022c22';
             ctx.lineWidth = 3.5;
-            const displayName = `[ONLINE] ⚡ ${tank.name}`;
+            const displayName = `${lvlTag} [ONLINE] ⚡ ${tank.name}`;
             ctx.strokeText(displayName, 0, barY - 5);
             ctx.fillText(displayName, 0, barY - 5);
 
@@ -1169,7 +1170,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#f87171';
             ctx.strokeStyle = '#020617';
             ctx.lineWidth = 3;
-            const displayName = `[AI] ${tank.name}`;
+            const displayName = `${lvlTag} [AI] ${tank.name}`;
             ctx.strokeText(displayName, 0, barY - 5);
             ctx.fillText(displayName, 0, barY - 5);
           }
