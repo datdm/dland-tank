@@ -28,9 +28,9 @@ async function startServer() {
 
   const rooms = new Map<string, Room>();
 
-  // Default public multiplayer arena: Active battle with 5 bots by default so action is always live
-  const publicGame = new GameEngine(5);
-  publicGame.setMaxBots(5);
+  // Default public multiplayer arena: Pure PvP between real online players (0 bots)
+  const publicGame = new GameEngine(0);
+  publicGame.setMaxBots(0);
   rooms.set('public', {
     id: 'public',
     game: publicGame,
@@ -119,7 +119,9 @@ async function startServer() {
 
             let targetRoom = rooms.get(targetRoomId);
             if (!targetRoom) {
-              const desiredBots = typeof msg.botCount === 'number' ? Math.max(0, Math.min(14, msg.botCount)) : (isAIMode ? 5 : 0);
+              const desiredBots = isAIMode
+                ? (typeof msg.botCount === 'number' ? Math.max(0, Math.min(14, msg.botCount)) : 5)
+                : 0;
               const newGame = new GameEngine(desiredBots);
               newGame.setMaxBots(desiredBots);
               targetRoom = {
@@ -129,9 +131,11 @@ async function startServer() {
                 isCustomAI: isAIMode,
               };
               rooms.set(targetRoomId, targetRoom);
-            } else if (typeof msg.botCount === 'number') {
-              if (isAIMode || msg.botCount > 0) {
+            } else {
+              if (isAIMode && typeof msg.botCount === 'number') {
                 targetRoom.game.setMaxBots(msg.botCount);
+              } else if (!isAIMode) {
+                targetRoom.game.setMaxBots(0);
               }
             }
 

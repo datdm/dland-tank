@@ -88,7 +88,6 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   const [color, setColor] = useState('#2563eb');
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
   const [copiedLink, setCopiedLink] = useState(false);
-  const [enableOnlineTestBots, setEnableOnlineTestBots] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const activeWeatherCfg = WEATHER_CONFIGS[currentWeather || 'RAIN'] || WEATHER_CONFIGS.RAIN;
@@ -149,7 +148,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
     e.preventDefault();
     const finalName = name.trim() || (mode === 'AI' ? 'Tập Sự AI' : 'Chiến Binh');
     sounds.playShoot();
-    const finalBots = mode === 'AI' ? botCount : (enableOnlineTestBots ? 3 : 0);
+    const finalBots = mode === 'AI' ? botCount : 0;
     onJoin(finalName, color, tankClass, mode, finalBots, roomId);
   };
 
@@ -378,25 +377,20 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                 </p>
               )}
 
-              {/* Invite link & Bot toggle */}
+              {/* Invite link & PvP indicator */}
               <div className="pt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 text-xs">
-                <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enableOnlineTestBots}
-                    onChange={(e) => setEnableOnlineTestBots(e.target.checked)}
-                    className="rounded bg-slate-900 border-slate-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                  <span>Bật 3 Bot AI hỗ trợ khi phòng chưa đủ người</span>
-                </label>
+                <span className="text-[11px] text-sky-300 font-semibold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Thuần PvP 100% (Không Bot AI)</span>
+                </span>
 
                 <button
                   type="button"
                   onClick={handleCopyInviteLink}
-                  className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 font-medium bg-sky-950/60 hover:bg-sky-900/60 border border-sky-500/30 px-2 py-0.5 rounded-lg transition-colors cursor-pointer text-[11px]"
+                  className="flex items-center gap-1.5 text-sky-400 hover:text-sky-300 font-medium bg-sky-950/60 hover:bg-sky-900/60 border border-sky-500/30 px-2.5 py-1 rounded-lg transition-colors cursor-pointer text-[11px]"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedLink ? 'Đã sao chép link!' : 'Sao chép link mời'}</span>
+                  <span>{copiedLink ? 'Đã sao chép link!' : 'Sao chép link mời bạn bè'}</span>
                 </button>
               </div>
             </div>
