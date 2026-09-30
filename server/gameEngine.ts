@@ -11,6 +11,9 @@ import {
   ChatMessage,
   LeaderboardEntry,
   GameSnapshot,
+  SkillType,
+  Landmine,
+  TankSkillState,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
@@ -52,6 +55,7 @@ export class GameEngine {
   private bullets: Bullet[] = [];
   private obstacles: Obstacle[] = [];
   private powerUps: PowerUpCrate[] = [];
+  private landmines: Landmine[] = [];
   private events: CombatEvent[] = [];
   private pendingEvents: CombatEvent[] = [];
   private chatHistory: ChatMessage[] = [];
@@ -348,6 +352,15 @@ export class GameEngine {
       nextAmmoType: this.getRandomAmmoType(),
       slowUntil: 0,
       burnUntil: 0,
+      skills: {
+        boostUntil: 0,
+        boostCooldownUntil: 0,
+        shieldUntil: 0,
+        shieldCooldownUntil: 0,
+        mineCooldownUntil: 0,
+        barrageUntil: 0,
+        barrageCooldownUntil: 0,
+      },
     };
 
     this.tanks.set(id, tank);
@@ -399,6 +412,90 @@ export class GameEngine {
     this.tankInputs.set(id, input);
   }
 
+  public useSkill(id: string, skill: SkillType): boolean {
+    const tank = this.tanks.get(id);
+    if (!tank || tank.isDead) return false;
+
+    const now = Date.now();
+    if (!tank.skills) {
+      tank.skills = {
+        boostUntil: 0,
+        boostCooldownUntil: 0,
+        shieldUntil: 0,
+        shieldCooldownUntil: 0,
+        mineCooldownUntil: 0,
+        barrageUntil: 0,
+        barrageCooldownUntil: 0,
+      };
+    }
+
+    if (skill === 'BOOST') {
+      if (now < tank.skills.boostCooldownUntil) return false;
+      tank.skills.boostUntil = now + 3500; // 3.5s duration
+      tank.skills.boostCooldownUntil = now + 10000; // 10s cooldown
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `⚡ ${tank.name} kích hoạt [Shift] TĂNG TỐC NITRO (+85% Tốc độ 3.5s)!`,
+        timestamp: now,
+        color: '#38bdf8',
+      });
+      return true;
+    }
+
+    if (skill === 'SHIELD') {
+      if (now < tank.skills.shieldCooldownUntil) return false;
+      tank.skills.shieldUntil = now + 3500; // 3.5s duration
+      tank.skills.shieldCooldownUntil = now + 12000; // 12s cooldown
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `🛡️ ${tank.name} bật [Space] KHIÊN TỪ TRƯỜNG PHÒNG THỦ (Chặn sát thương 3.5s)!`,
+        timestamp: now,
+        color: '#00f0ff',
+      });
+      return true;
+    }
+
+    if (skill === 'MINE') {
+      if (now < tank.skills.mineCooldownUntil) return false;
+      tank.skills.mineCooldownUntil = now + 10000; // 10s cooldown
+      this.landmines.push({
+        id: `mine_${now}_${Math.random().toString(36).substring(2, 6)}`,
+        ownerId: tank.id,
+        ownerName: tank.name,
+        x: tank.x,
+        y: tank.y,
+        createdAt: now,
+        expiresAt: now + 30000,
+      });
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `💣 ${tank.name} gài [E] MÌN BẪY PLASMA (Nổ 70 sát thương & Làm chậm)!`,
+        timestamp: now,
+        color: '#eab308',
+      });
+      return true;
+    }
+
+    if (skill === 'BARRAGE') {
+      if (now < tank.skills.barrageCooldownUntil) return false;
+      tank.skills.barrageUntil = now + 4000; // 4s duration
+      tank.skills.barrageCooldownUntil = now + 15000; // 15s cooldown
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'powerup',
+        text: `🔥 ${tank.name} kích hoạt [R] PHÁO CAO TỐC LIÊN HOÀN (Tốc bắn x2)!`,
+        timestamp: now,
+        color: '#f43f5e',
+      });
+      return true;
+    }
+
+    return false;
+  }
+
   public respawnPlayer(id: string) {
     const tank = this.tanks.get(id);
     if (!tank || !tank.isDead) return;
@@ -414,6 +511,15 @@ export class GameEngine {
     tank.invulnerableUntil = Date.now() + 3000;
     tank.activePowerUp = null;
     tank.nextAmmoType = this.getRandomAmmoType();
+    tank.skills = {
+      boostUntil: 0,
+      boostCooldownUntil: 0,
+      shieldUntil: 0,
+      shieldCooldownUntil: 0,
+      mineCooldownUntil: 0,
+      barrageUntil: 0,
+      barrageCooldownUntil: 0,
+    };
   }
 
   public addChatMessage(senderId: string, text: string): ChatMessage | null {
@@ -552,6 +658,12 @@ export class GameEngine {
           speedMult = 1.35; // All component item crates grant +35% Speed!
         }
       }
+
+      // [Shift] Nitro Boost Skill
+      if (tank.skills && now < tank.skills.boostUntil) {
+        speedMult *= 1.85; // +85% Boost Turbo
+      }
+
       if (tank.slowUntil && now < tank.slowUntil) {
         speedMult *= 0.52;
       }
@@ -636,6 +748,10 @@ export class GameEngine {
       let cooldown = baseStats.fireCooldown;
       if (tank.activePowerUp?.type === 'RAPID_FIRE') {
         cooldown *= 0.55;
+      }
+      // [R] Barrage Skill: Double fire rate
+      if (tank.skills && now < tank.skills.barrageUntil) {
+        cooldown *= 0.5;
       }
 
       if (input.isFiring && now - tank.lastFired >= cooldown) {
@@ -734,6 +850,14 @@ export class GameEngine {
         // Check invulnerability
         if (now < targetTank.invulnerableUntil) continue;
 
+        // Check Force Shield Skill (100% absorption)
+        if (targetTank.skills && now < targetTank.skills.shieldUntil) {
+          if (distance(b.x, b.y, targetTank.x, targetTank.y) < TANK_RADIUS + BULLET_RADIUS + 8) {
+            this.bullets.splice(i, 1);
+            break;
+          }
+        }
+
         if (distance(b.x, b.y, targetTank.x, targetTank.y) < TANK_RADIUS + BULLET_RADIUS) {
           this.damageTank(targetTank, b);
 
@@ -744,6 +868,61 @@ export class GameEngine {
           }
 
           this.bullets.splice(i, 1);
+          break;
+        }
+      }
+    }
+
+    // 5. Update Landmines
+    for (let mi = this.landmines.length - 1; mi >= 0; mi--) {
+      const mine = this.landmines[mi];
+      if (now > mine.expiresAt) {
+        this.landmines.splice(mi, 1);
+        continue;
+      }
+
+      // Arm after 400ms
+      if (now - mine.createdAt < 400) continue;
+
+      for (const [tid, target] of this.tanks) {
+        if (target.isDead || tid === mine.ownerId) continue;
+        if (distance(mine.x, mine.y, target.x, target.y) < TANK_RADIUS + 14) {
+          if (!target.skills || now >= target.skills.shieldUntil) {
+            target.hp = Math.max(0, target.hp - 70);
+            target.slowUntil = now + 2500;
+            if (target.hp <= 0) {
+              target.hp = 0;
+              target.isDead = true;
+              target.respawnCountdown = 3.5;
+              target.deaths += 1;
+              target.streak = 0;
+              const owner = this.tanks.get(mine.ownerId);
+              if (owner) {
+                owner.kills += 1;
+                owner.score += 150;
+                this.addEvent({
+                  id: this.generateEventId(),
+                  type: 'kill',
+                  text: `💥 [MÌN PLASMA] ${target.name} đã đạp trúng mìn của ${owner.name}!`,
+                  timestamp: now,
+                  killerId: owner.id,
+                  victimId: target.id,
+                  killerName: owner.name,
+                  victimName: target.name,
+                  color: '#ef4444',
+                });
+              }
+            } else {
+              this.addEvent({
+                id: this.generateEventId(),
+                type: 'powerup',
+                text: `💥 ${target.name} đạp trúng Mìn Plasma (-70 HP & Làm chậm 2.5s)!`,
+                timestamp: now,
+                color: '#f97316',
+              });
+            }
+          }
+          this.landmines.splice(mi, 1);
           break;
         }
       }
@@ -1151,6 +1330,17 @@ export class GameEngine {
         input.turretAngle = Math.atan2(target.y - tank.y, target.x - tank.x) + jitter;
         // Fire when in range (< 950) with active combat cadence
         input.isFiring = distToTarget < 950 && Math.random() > 0.08;
+
+        // Tactical Bot Skill Usage
+        if (tank.hp < tank.maxHp * 0.45 && Math.random() < 0.08) {
+          this.useSkill(id, 'SHIELD');
+        } else if (distToTarget > 350 && distToTarget < 850 && Math.random() < 0.04) {
+          this.useSkill(id, 'BOOST');
+        } else if (distToTarget < 550 && Math.random() < 0.05) {
+          this.useSkill(id, 'BARRAGE');
+        } else if (distToTarget < 180 && Math.random() < 0.04) {
+          this.useSkill(id, 'MINE');
+        }
       } else {
         // Occasional random suppressive shot in patrolling direction
         if (Math.random() < 0.06) {
@@ -1185,6 +1375,7 @@ export class GameEngine {
       bullets: this.bullets,
       powerUps: this.powerUps,
       obstacles: this.obstacles,
+      landmines: this.landmines,
       leaderboard: sortedLeaderboard,
       serverTime: Date.now(),
     };

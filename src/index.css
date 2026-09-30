@@ -12,4 +12,40 @@
     background-color: #020617;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
+
+  /* Custom tactical cyberpunk scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #0284c7;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #38bdf8;
+  }
+}
+
+.custom-chat-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #0284c7 rgba(15, 23, 42, 0.7);
+}
+.custom-chat-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 4px;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-thumb {
+  background: #0284c7;
+  border-radius: 4px;
+}
+.custom-chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #38bdf8;
 }

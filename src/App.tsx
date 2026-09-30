@@ -19,6 +19,11 @@ import {
   GameMode,
   PublicPlayerInfo,
   TANK_CLASSES,
+  WeatherType,
+  WEATHER_CONFIGS,
+  WEATHER_CYCLE,
+  SkillType,
+  Landmine,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -28,7 +33,10 @@ import { KillBanner } from './components/KillBanner';
 import { ChatBox } from './components/ChatBox';
 import { LobbyModal } from './components/LobbyModal';
 import { RespawnOverlay } from './components/RespawnOverlay';
+import { SpectatorHUD } from './components/SpectatorHUD';
+import { HelpModal } from './components/HelpModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
+import { SkillBarHUD } from './components/SkillBarHUD';
 import { sounds } from './utils/audio';
 import {
   Volume2,
@@ -51,6 +59,11 @@ import {
   ExternalLink,
   Copy,
   Check,
+  LogOut,
+  Eye,
+  Swords,
+  Video,
+  Crosshair,
 } from 'lucide-react';
 
 export default function App() {
@@ -74,7 +87,7 @@ export default function App() {
 
   // Show/Hide UI Toggles
   const [showTopBar, setShowTopBar] = useState(true);
-  const [showMinimap, setShowMinimap] = useState(true);
+  const [mapMode, setMapMode] = useState<'small' | 'large' | 'hidden'>('small');
   const [showLeaderboard, setShowLeaderboard] = useState(true);
   const [showStats, setShowStats] = useState(true);
   const [showKillfeed, setShowKillfeed] = useState(true);
@@ -84,6 +97,7 @@ export default function App() {
   const [bullets, setBullets] = useState<Bullet[]>([]);
   const [obstacles, setObstacles] = useState<Obstacle[]>([]);
   const [powerUps, setPowerUps] = useState<PowerUpCrate[]>([]);
+  const [landmines, setLandmines] = useState<Landmine[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [events, setEvents] = useState<CombatEvent[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -94,6 +108,23 @@ export default function App() {
   const [isControlsModalOpen, setIsControlsModalOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
   const [botCount, setBotCount] = useState(7);
+
+  // Dynamic 1-Minute Weather Cycle System
+  const [currentWeatherIndex, setCurrentWeatherIndex] = useState(0);
+  const [weatherSecondsLeft, setWeatherSecondsLeft] = useState(60);
+  const [weatherToast, setWeatherToast] = useState<{
+    name: string;
+    icon: string;
+    description: string;
+    themeColor: string;
+  } | null>(null);
+
+  // Spectator & Free Camera Panning States
+  const [isSpectator, setIsSpectator] = useState(false);
+  const [spectatorTargetId, setSpectatorTargetId] = useState<string | 'free'>('free');
+  const [freeCameraPos, setFreeCameraPos] = useState({ x: 2100, y: 2100 });
+  const [focusBeacon, setFocusBeacon] = useState<{ x: number; y: number; timestamp: number } | null>(null);
+  const [isFreeCameraActive, setIsFreeCameraActive] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const isInGameRef = useRef(false);
@@ -127,6 +158,96 @@ export default function App() {
   useEffect(() => {
     isInGameRef.current = isInGame;
   }, [isInGame]);
+
+  // 1-Minute Weather Cycle Timer (60 seconds per weather atmosphere)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setWeatherSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setCurrentWeatherIndex((oldIdx) => {
+            const nextIdx = (oldIdx + 1) % WEATHER_CYCLE.length;
+            const nextWeatherType = WEATHER_CYCLE[nextIdx];
+            const cfg = WEATHER_CONFIGS[nextWeatherType];
+            setWeatherToast({
+              name: cfg.vietnameseName,
+              icon: cfg.icon,
+              description: cfg.description,
+              themeColor: cfg.themeColor,
+            });
+            sounds.playPowerUp();
+            return nextIdx;
+          });
+          return 60;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Auto-dismiss weather change announcement banner after 5 seconds
+  useEffect(() => {
+    if (weatherToast) {
+      const t = setTimeout(() => {
+        setWeatherToast(null);
+      }, 5000);
+      return () => clearTimeout(t);
+    }
+  }, [weatherToast]);
+
+  const handleManualSwitchWeather = () => {
+    setCurrentWeatherIndex((oldIdx) => {
+      const nextIdx = (oldIdx + 1) % WEATHER_CYCLE.length;
+      const nextWeatherType = WEATHER_CYCLE[nextIdx];
+      const cfg = WEATHER_CONFIGS[nextWeatherType];
+      setWeatherToast({
+        name: cfg.vietnameseName,
+        icon: cfg.icon,
+        description: cfg.description,
+        themeColor: cfg.themeColor,
+      });
+      sounds.playPowerUp();
+      return nextIdx;
+    });
+    setWeatherSecondsLeft(60);
+  };
+
+  const handleFocusWorldPos = (x: number, y: number) => {
+    setFreeCameraPos({ x, y });
+    setIsFreeCameraActive(true);
+    setFocusBeacon({ x, y, timestamp: Date.now() });
+    sounds.playPowerUp();
+  };
+
+  const handlePanCamera = (camX: number, camY: number) => {
+    setFreeCameraPos({ x: camX, y: camY });
+    setIsFreeCameraActive(true);
+  };
+
+  const handleRecenterCamera = () => {
+    setIsFreeCameraActive(false);
+    const myTank = tanks.find((t) => t.id === myPlayerId);
+    if (myTank) {
+      setFreeCameraPos({ x: myTank.x, y: myTank.y });
+    }
+  };
+
+  const handleExitGame = () => {
+    setIsInGame(false);
+    setIsSpectator(false);
+    setIsFreeCameraActive(false);
+  };
+
+  const handleUseSkill = (skill: SkillType) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      const msg: ClientMessage = {
+        type: 'USE_SKILL',
+        skill,
+      };
+      socketRef.current.send(JSON.stringify(msg));
+    }
+  };
 
   // Immediate send input function
   const sendInput = useCallback(() => {
@@ -195,6 +316,7 @@ export default function App() {
               setTanks(msg.snapshot.tanks);
               setBullets(msg.snapshot.bullets);
               setPowerUps(msg.snapshot.powerUps);
+              setLandmines(msg.snapshot.landmines || []);
               setLeaderboard(msg.snapshot.leaderboard);
 
               // De-duplicate initial events by id
@@ -214,6 +336,7 @@ export default function App() {
               setBullets(msg.snapshot.bullets);
               setPowerUps(msg.snapshot.powerUps);
               setObstacles(msg.snapshot.obstacles);
+              setLandmines(msg.snapshot.landmines || []);
               setLeaderboard(msg.snapshot.leaderboard);
               break;
             }
@@ -334,10 +457,21 @@ export default function App() {
         return;
       }
 
-      // Hotkey M: Toggle Minimap
+      // Hotkey M: Cycle Map Mode (Lần 1: Map Nhỏ -> Lần 2: Map To ở giữa màn hình -> Lần 3: Ẩn -> Lần tiếp: Map Nhỏ lại)
       if (e.key.toLowerCase() === 'm') {
         e.preventDefault();
-        setShowMinimap((prev) => !prev);
+        setMapMode((prev) => {
+          if (prev === 'small') return 'large';
+          if (prev === 'large') return 'hidden';
+          return 'small';
+        });
+        return;
+      }
+
+      // Escape Key: If large map dialog is open, close/hide it
+      if (e.key === 'Escape' && mapMode === 'large') {
+        e.preventDefault();
+        setMapMode('hidden');
         return;
       }
 
@@ -372,36 +506,106 @@ export default function App() {
         return;
       }
 
-      let changed = false;
       const k = e.key.toLowerCase();
+
+      // Spectator Hotkeys: Q/E or Left/Right arrows to cycle target, WASD to move free camera
+      if (isSpectator) {
+        const aliveTanks = tanks.filter((t) => !t.isDead);
+        if (k === 'q') {
+          e.preventDefault();
+          if (aliveTanks.length > 0) {
+            const curIdx = aliveTanks.findIndex((t) => t.id === spectatorTargetId);
+            const prevIdx = (curIdx - 1 + aliveTanks.length) % aliveTanks.length;
+            setSpectatorTargetId(aliveTanks[prevIdx].id);
+          }
+          return;
+        }
+        if (k === 'e') {
+          e.preventDefault();
+          if (aliveTanks.length > 0) {
+            const curIdx = aliveTanks.findIndex((t) => t.id === spectatorTargetId);
+            const nextIdx = (curIdx + 1) % aliveTanks.length;
+            setSpectatorTargetId(aliveTanks[nextIdx].id);
+          }
+          return;
+        }
+
+        // Free Camera WASD panning
+        const moveStep = e.shiftKey ? 80 : 40;
+        if (k === 'w' || k === 'arrowup') {
+          e.preventDefault();
+          setSpectatorTargetId('free');
+          setFreeCameraPos((prev) => ({ ...prev, y: Math.max(100, prev.y - moveStep) }));
+          return;
+        }
+        if (k === 's' || k === 'arrowdown') {
+          e.preventDefault();
+          setSpectatorTargetId('free');
+          setFreeCameraPos((prev) => ({ ...prev, y: Math.min(worldSize.height - 100, prev.y + moveStep) }));
+          return;
+        }
+        if (k === 'a' || k === 'arrowleft') {
+          e.preventDefault();
+          setSpectatorTargetId('free');
+          setFreeCameraPos((prev) => ({ ...prev, x: Math.max(100, prev.x - moveStep) }));
+          return;
+        }
+        if (k === 'd' || k === 'arrowright') {
+          e.preventDefault();
+          setSpectatorTargetId('free');
+          setFreeCameraPos((prev) => ({ ...prev, x: Math.min(worldSize.width - 100, prev.x + moveStep) }));
+          return;
+        }
+      }
+
+      // Tactical Skill Shortcuts: Shift (Boost), Space/Q (Shield), E/F (Mine), R (Barrage)
+      if (e.key === 'Shift' || k === 'shift') {
+        e.preventDefault();
+        handleUseSkill('BOOST');
+        return;
+      }
+      if (e.code === 'Space' || k === 'q') {
+        e.preventDefault();
+        handleUseSkill('SHIELD');
+        return;
+      }
+      if (k === 'e' || k === 'f') {
+        e.preventDefault();
+        handleUseSkill('MINE');
+        return;
+      }
+      if (k === 'r') {
+        e.preventDefault();
+        handleUseSkill('BARRAGE');
+        return;
+      }
+
+      let changed = false;
       if (k === 'w' || k === 'arrowup') {
+        setIsFreeCameraActive(false);
         if (!inputStateRef.current.up) {
           inputStateRef.current.up = true;
           changed = true;
         }
       }
       if (k === 's' || k === 'arrowdown') {
+        setIsFreeCameraActive(false);
         if (!inputStateRef.current.down) {
           inputStateRef.current.down = true;
           changed = true;
         }
       }
       if (k === 'a' || k === 'arrowleft') {
+        setIsFreeCameraActive(false);
         if (!inputStateRef.current.left) {
           inputStateRef.current.left = true;
           changed = true;
         }
       }
       if (k === 'd' || k === 'arrowright') {
+        setIsFreeCameraActive(false);
         if (!inputStateRef.current.right) {
           inputStateRef.current.right = true;
-          changed = true;
-        }
-      }
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (!inputStateRef.current.isFiring) {
-          inputStateRef.current.isFiring = true;
           changed = true;
         }
       }
@@ -493,10 +697,15 @@ export default function App() {
     tankClass: TankClass,
     mode: GameMode,
     selectedBots: number,
-    customRoomId?: string
+    customRoomId?: string,
+    spectator: boolean = false
   ) => {
     setGameMode(mode);
     setBotCount(selectedBots);
+    setIsSpectator(spectator);
+    if (spectator) {
+      setSpectatorTargetId('free');
+    }
     profileRef.current = {
       name,
       color,
@@ -516,6 +725,7 @@ export default function App() {
           mode,
           roomId: customRoomId || 'public',
           botCount: selectedBots,
+          isSpectator: spectator,
         };
         socketRef.current.send(JSON.stringify(joinMsg));
       }
@@ -533,6 +743,38 @@ export default function App() {
       setTimeout(() => clearInterval(waitInterval), 4000);
     }
     setIsInGame(true);
+  };
+
+  const handleToggleSpectator = (targetSpectatorState?: boolean) => {
+    const nextSpectatorState = targetSpectatorState !== undefined ? targetSpectatorState : !isSpectator;
+    setIsSpectator(nextSpectatorState);
+
+    if (nextSpectatorState) {
+      // Switch to Spectator
+      const otherAlive = tanks.find((t) => t.id !== myPlayerId && !t.isDead);
+      setSpectatorTargetId(otherAlive ? otherAlive.id : 'free');
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'SET_SPECTATOR',
+            isSpectator: true,
+          })
+        );
+      }
+    } else {
+      // Switch to active combat
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'SET_SPECTATOR',
+            isSpectator: false,
+            name: profileRef.current.name,
+            color: profileRef.current.color,
+            tankClass: profileRef.current.tankClass,
+          })
+        );
+      }
+    }
   };
 
   const handleRespawn = () => {
@@ -671,6 +913,17 @@ export default function App() {
                 {ping}ms
               </span>
             </div>
+
+            {/* Dynamic Weather Ambient Status (Auto-cycles in background) */}
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 text-xs font-mono shadow-sm select-none"
+              title={`Thời tiết chiến trường: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}`}
+            >
+              <span className="text-sm">{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
+              <span className="text-slate-200 font-bold hidden md:inline">
+                {WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}
+              </span>
+            </div>
           </div>
 
           {/* Right: 5. Loa, 6. Help, 7. Đổi xe, 8. Ẩn thanh */}
@@ -696,11 +949,35 @@ export default function App() {
             {/* Đổi xe */}
             <button
               onClick={() => setIsInGame(false)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
               title="Đổi loại xe tăng hoặc đổi chế độ"
             >
               <Shield className="w-3.5 h-3.5 text-amber-400" />
               <span>Đổi Xe</span>
+            </button>
+
+            {/* Chuyển đổi Khán Giả / Tham Chiến */}
+            <button
+              onClick={() => handleToggleSpectator()}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+                isSpectator
+                  ? 'bg-sky-600 hover:bg-sky-500 text-white border-sky-400 shadow-sky-600/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border-sky-500/40'
+              }`}
+              title={isSpectator ? 'Tham gia chiến đấu ngay' : 'Chuyển sang chế độ khán giả xem trận'}
+            >
+              {isSpectator ? <Swords className="w-3.5 h-3.5 text-white" /> : <Eye className="w-3.5 h-3.5 text-sky-400" />}
+              <span>{isSpectator ? 'Vào Chiến Đấu' : 'Xem Trận'}</span>
+            </button>
+
+            {/* Thoát Game / Rời Trận */}
+            <button
+              onClick={handleExitGame}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/50 hover:border-rose-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              title="Thoát trận đấu và quay về sảnh chờ"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              <span>Thoát Game</span>
             </button>
 
             {/* Ẩn thanh */}
@@ -730,6 +1007,23 @@ export default function App() {
           <div className="bg-slate-900/90 border border-slate-700/80 text-sky-300 px-2.5 py-1 rounded-full text-[11px] font-mono shadow-xl backdrop-blur-md">
             Zoom {Math.round(zoomScale * 100)}%
           </div>
+
+          <div
+            className="bg-slate-900/90 border border-slate-700/80 text-slate-300 px-2.5 py-1 rounded-full text-[11px] font-mono shadow-xl backdrop-blur-md flex items-center gap-1.5 select-none"
+            title={`Thời tiết: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}`}
+          >
+            <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
+            <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}</span>
+          </div>
+
+          <button
+            onClick={handleExitGame}
+            className="flex items-center gap-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/60 text-rose-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
+            title="Thoát trận đấu"
+          >
+            <LogOut className="w-3 h-3 text-rose-400" />
+            <span>Thoát</span>
+          </button>
         </div>
       )}
 
@@ -746,18 +1040,61 @@ export default function App() {
           bullets={bullets}
           obstacles={obstacles}
           powerUps={powerUps}
+          landmines={landmines}
           worldSize={worldSize}
           is25DMode={is25DMode}
           zoomScale={zoomScale}
+          isSpectator={isSpectator}
+          spectatorTargetId={spectatorTargetId}
+          freeCameraPos={freeCameraPos}
+          onSelectSpectatorTarget={(id) => setSpectatorTargetId(id)}
+          currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
+          focusBeacon={focusBeacon}
+          onPanCamera={handlePanCamera}
+          onFocusWorldPos={handleFocusWorldPos}
+          isFreeCameraActive={isFreeCameraActive}
         />
+
+        {/* Floating Re-center Camera Button when user has panned freely */}
+        {isFreeCameraActive && !isSpectator && (
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <button
+              onClick={handleRecenterCamera}
+              className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-slate-950 font-black px-4 py-2 rounded-full shadow-2xl border border-amber-300/60 cursor-pointer text-xs uppercase tracking-wider transition-all active:scale-95"
+              title="Quay lại vị trí xe của bạn (Nhấn WASD hoặc click nút này)"
+            >
+              <Crosshair className="w-4 h-4" />
+              <span>QUAY VỀ XE CỦA TÔI (WASD / Space)</span>
+            </button>
+          </div>
+        )}
+
+        {/* Weather Transition Announcement Toast */}
+        {weatherToast && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%]">
+            <div
+              className="flex items-center gap-3 bg-slate-950/95 border px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md text-xs"
+              style={{ borderColor: weatherToast.themeColor }}
+            >
+              <span className="text-3xl shrink-0 animate-bounce">{weatherToast.icon}</span>
+              <div className="min-w-0">
+                <div className="font-mono font-black uppercase tracking-wide flex items-center gap-1.5 text-xs truncate" style={{ color: weatherToast.themeColor }}>
+                  <span>THỜI TIẾT CHIẾN TRƯỜNG:</span>
+                  <span className="text-white font-bold">{weatherToast.name}</span>
+                </div>
+                <div className="text-[11px] text-slate-300 truncate mt-0.5">{weatherToast.description}</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* In-Game HUD Overlays */}
         {isInGame && (
           <>
             {/* TOP-LEFT: Radar Minimap + Killfeed */}
             <div className="absolute top-4 left-4 z-20 flex flex-col gap-2.5 pointer-events-none">
-              {/* Minimap on Top-Left with Show/Hide */}
-              {showMinimap ? (
+              {/* Minimap on Top-Left (Small) or Button (Hidden) */}
+              {mapMode === 'small' && (
                 <div className="pointer-events-auto">
                   <RadarMinimap
                     myPlayerId={myPlayerId}
@@ -765,18 +1102,40 @@ export default function App() {
                     obstacles={obstacles}
                     powerUps={powerUps}
                     worldSize={worldSize}
-                    onHide={() => setShowMinimap(false)}
+                    mode="small"
+                    onSetMode={setMapMode}
+                    onFocusWorldPos={handleFocusWorldPos}
+                    cameraPos={freeCameraPos}
+                    focusBeacon={focusBeacon}
                   />
                 </div>
-              ) : (
+              )}
+
+              {mapMode === 'hidden' && (
                 <button
-                  onClick={() => setShowMinimap(true)}
+                  onClick={() => setMapMode('small')}
                   className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 border border-sky-500/40 text-sky-300 px-2.5 py-1.5 rounded-lg shadow-lg text-xs backdrop-blur-sm cursor-pointer transition-all self-start"
-                  title="Nhấn phím M để mở nhanh"
+                  title="Nhấn phím M: Map Nhỏ -> Map To (Dialog giữa) -> Ẩn"
                 >
                   <MapIcon className="w-3.5 h-3.5 text-sky-400" />
                   <span>Hiện Bản Đồ (M)</span>
                 </button>
+              )}
+
+              {/* Centered Large Map Dialog when mode is large */}
+              {mapMode === 'large' && (
+                <RadarMinimap
+                  myPlayerId={myPlayerId}
+                  tanks={tanks}
+                  obstacles={obstacles}
+                  powerUps={powerUps}
+                  worldSize={worldSize}
+                  mode="large"
+                  onSetMode={setMapMode}
+                  onFocusWorldPos={handleFocusWorldPos}
+                  cameraPos={freeCameraPos}
+                  focusBeacon={focusBeacon}
+                />
               )}
 
               {/* Combat Killfeed Status with Show/Hide */}
@@ -1013,6 +1372,11 @@ export default function App() {
               />
             </div>
 
+            {/* BOTTOM-CENTER: Tactical Skill Bar HUD (Shift: Boost, Space: Shield, E: Mine, R: Barrage) */}
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in slide-in-from-bottom-3 duration-200">
+              <SkillBarHUD myTank={myTank} onUseSkill={handleUseSkill} />
+            </div>
+
             {/* Mobile Virtual Controls */}
             <VirtualJoystick
               onMoveChange={(move) => {
@@ -1031,13 +1395,24 @@ export default function App() {
               }}
             />
 
+            {/* Spectator Mode HUD */}
+            {isSpectator && (
+              <SpectatorHUD
+                tanks={tanks}
+                spectatorTargetId={spectatorTargetId}
+                onSelectTarget={setSpectatorTargetId}
+                onJoinBattle={() => handleToggleSpectator(false)}
+              />
+            )}
+
             {/* Respawn Dialog if dead */}
-            {myTank?.isDead && (
+            {myTank?.isDead && !isSpectator && (
               <RespawnOverlay
                 countdown={myTank.respawnCountdown}
                 onRespawn={handleRespawn}
                 kills={myTank.kills}
                 score={myTank.score}
+                onSwitchToSpectator={() => handleToggleSpectator(true)}
               />
             )}
             {/* Kill Announcement Banner */}
@@ -1058,71 +1433,12 @@ export default function App() {
           isSocketConnected={isSocketConnected}
           publicPlayers={lobbyInfo.publicPlayers}
           initialMode={gameMode}
+          currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
         />
       )}
 
       {/* 4. Controls & Help Modal */}
-      {isControlsModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 text-white shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2 font-bold text-base">
-                <HelpCircle className="w-5 h-5 text-sky-400" />
-                Hướng Dẫn Thao Tác & Phím Tắt
-              </div>
-              <button
-                onClick={() => setIsControlsModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-4 text-xs text-slate-300">
-              <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800">
-                <h4 className="font-bold text-white text-sm mb-2 text-sky-400">Điều Khiển Xe Tăng</h4>
-                <ul className="space-y-1.5 list-disc pl-4">
-                  <li><strong>W, S, A, D / Mũi tên</strong>: Di chuyển xe tăng trực tiếp theo 8 hướng cực kỳ nhạy và trượt mượt mà dọc theo tường.</li>
-                  <li><strong>Con trỏ chuột</strong>: Xoay nòng pháo 360 độ độc lập với thân xe.</li>
-                  <li><strong>Chuột trái hoặc Phím Space</strong>: Bắn đạn pháo.</li>
-                </ul>
-              </div>
-
-              <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800">
-                <h4 className="font-bold text-white text-sm mb-2 text-emerald-400">2 Chế Độ Chơi, Linh Kiện Tăng Tốc & Thông Báo Hạ Gục</h4>
-                <ul className="space-y-1.5 list-disc pl-4">
-                  <li><strong>Chế Độ Online</strong>: Chiến đấu PvP trực tiếp giữa người chơi thật. Có nút sao chép link mời bạn bè vào cùng phòng.</li>
-                  <li><strong>Chế Độ Bot AI</strong>: Phòng riêng tự do chọn số lượng bot AI (1 - 14 bots) để luyện tập tác chiến riêng biệt.</li>
-                  <li><strong>Linh kiện nâng cấp tăng tốc độ</strong>: Mọi hộp linh kiện (Cứu thương, Khiên giáp, Đạn 3 tia, Nạp nhanh) đều tăng <strong>+35% tốc độ</strong>, riêng Nitro tăng vọt <strong>+85% tốc độ</strong> cực bốc!</li>
-                  <li><strong>Thông báo hạ gục đối thủ</strong>: Hiển thị banner chiến công nổi bật khi tiêu diệt đối thủ kèm chuỗi hạ gục (Double Kill, Triple Kill, Mega Kill, Unstoppable) và âm thanh ăn mừng!</li>
-                  <li><strong>Mỗi người bắn đạn ngẫu nhiên</strong>: Mỗi phát bắn xuất hiện ngẫu nhiên 1 trong 8 loại đạn (Đại bác nổ lan, Chùm 3 tia, Laze Plasma, Đạn Băng làm chậm, Đạn Lửa thiêu đốt, Đạn Bật nảy tường, Đạn Xuyên giáp, Đạn Tiêu chuẩn).</li>
-                </ul>
-              </div>
-
-              <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800">
-                <h4 className="font-bold text-white text-sm mb-2 text-amber-400">Phím Tắt Ẩn/Hiện Giao Diện (Show/Hide HUD)</h4>
-                <ul className="space-y-1.5 list-disc pl-4">
-                  <li><strong>Phím H</strong>: Ẩn / Hiện Thanh báo Status xe tăng (Máu HP, Giáp, Đạn ngẫu nhiên nạp).</li>
-                  <li><strong>Phím - / + / 0</strong>: Điều chỉnh tỉ lệ hiển thị (Mặc định 75% như Chrome, phím 0 để đặt lại).</li>
-                  <li><strong>Phím U</strong>: Ẩn / Hiện Thanh trạng thái đầu trang (Top Status Bar) để mở rộng tầm nhìn tối đa.</li>
-                  <li><strong>Phím M</strong>: Ẩn / Hiện Bản đồ nhỏ (Minimap) ở góc trên bên trái.</li>
-                  <li><strong>Phím L</strong>: Ẩn / Hiện Bảng điểm trực tiếp ở góc trên bên phải.</li>
-                  <li><strong>Phím K</strong>: Ẩn / Hiện Báo cáo hạ gục (Combat Status / Killfeed).</li>
-                  <li><strong>Phím TAB</strong>: Mở rộng / Đóng bảng xếp hạng chi tiết toàn phòng.</li>
-                  <li><strong>Phím Enter</strong>: Bật khung chat để nói chuyện với người chơi khác.</li>
-                </ul>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setIsControlsModalOpen(false)}
-              className="mt-5 w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-xl transition-colors cursor-pointer text-xs"
-            >
-              Đã hiểu, quay lại trận đấu
-            </button>
-          </div>
-        </div>
-      )}
+      <HelpModal isOpen={isControlsModalOpen} onClose={() => setIsControlsModalOpen(false)} />
     </div>
   );
 }

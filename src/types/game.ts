@@ -58,6 +58,28 @@ export type BulletModifier =
   | 'RICOCHET'
   | 'PIERCING';
 
+export type SkillType = 'BOOST' | 'SHIELD' | 'MINE' | 'BARRAGE';
+
+export interface TankSkillState {
+  boostUntil: number;
+  boostCooldownUntil: number;
+  shieldUntil: number;
+  shieldCooldownUntil: number;
+  mineCooldownUntil: number;
+  barrageUntil: number;
+  barrageCooldownUntil: number;
+}
+
+export interface Landmine {
+  id: string;
+  ownerId: string;
+  ownerName: string;
+  x: number;
+  y: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
 export interface PlayerTank {
   id: string;
   name: string;
@@ -88,6 +110,7 @@ export interface PlayerTank {
   nextAmmoType?: BulletModifier;
   slowUntil?: number;
   burnUntil?: number;
+  skills?: TankSkillState;
 }
 
 export interface Bullet {
@@ -166,6 +189,7 @@ export interface GameSnapshot {
   obstacles: Obstacle[];
   leaderboard: LeaderboardEntry[];
   serverTime: number;
+  landmines?: Landmine[];
 }
 
 export type GameMode = 'AI' | 'PUBLIC';
@@ -188,6 +212,7 @@ export type ClientMessage =
       mode?: GameMode;
       roomId?: string;
       botCount?: number;
+      isSpectator?: boolean;
     }
   | {
       type: 'INPUT';
@@ -197,8 +222,17 @@ export type ClientMessage =
       right: boolean;
       turretAngle: number;
       isFiring: boolean;
+      skillTrigger?: SkillType;
     }
+  | { type: 'USE_SKILL'; skill: SkillType }
   | { type: 'RESPAWN' }
+  | {
+      type: 'SET_SPECTATOR';
+      isSpectator: boolean;
+      name?: string;
+      color?: string;
+      tankClass?: TankClass;
+    }
   | { type: 'CHAT'; text: string }
   | { type: 'PING'; timestamp: number }
   | { type: 'TOGGLE_BOTS'; count?: number };
@@ -225,3 +259,78 @@ export type ServerMessage =
       publicPlayers: PublicPlayerInfo[];
       activeRoomId?: string;
     };
+
+export type WeatherType = 'DAWN' | 'DESERT' | 'RAIN' | 'SUNSET' | 'SNOW';
+
+export interface WeatherInfo {
+  type: WeatherType;
+  name: string;
+  vietnameseName: string;
+  icon: string;
+  themeColor: string;
+  ambientColor: string;
+  gridColor: string;
+  groundBgColor: string;
+  description: string;
+}
+
+export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
+  DAWN: {
+    type: 'DAWN',
+    name: 'Dawn',
+    vietnameseName: 'Bình Minh Rạng Rỡ',
+    icon: '🌅',
+    themeColor: '#f59e0b',
+    ambientColor: 'rgba(251, 146, 60, 0.08)',
+    gridColor: 'rgba(253, 186, 116, 0.12)',
+    groundBgColor: '#0f172a',
+    description: 'Ánh nắng ban mai vàng ấm, sương sớm dịu nhẹ phủ quanh chiến trường.',
+  },
+  DESERT: {
+    type: 'DESERT',
+    name: 'Desert',
+    vietnameseName: 'Sa Mạc Cát Vàng',
+    icon: '🏜️',
+    themeColor: '#d97706',
+    ambientColor: 'rgba(217, 119, 6, 0.12)',
+    gridColor: 'rgba(245, 158, 11, 0.14)',
+    groundBgColor: '#1c160c',
+    description: 'Nắng sa mạc vàng óng, gió cát sa mạc cuộn bay mờ ảo khắp đấu trường.',
+  },
+  RAIN: {
+    type: 'RAIN',
+    name: 'Rain',
+    vietnameseName: 'Mưa Bão Sấm Sét',
+    icon: '🌧️',
+    themeColor: '#0ea5e9',
+    ambientColor: 'rgba(14, 165, 233, 0.12)',
+    gridColor: 'rgba(56, 189, 248, 0.12)',
+    groundBgColor: '#061021',
+    description: 'Mưa giông rào rạt, giọt mưa bắn nước và chớp sấm chói rọi khắp bản đồ.',
+  },
+  SUNSET: {
+    type: 'SUNSET',
+    name: 'Sunset',
+    vietnameseName: 'Hoàng Hôn Tím Đỏ',
+    icon: '🌇',
+    themeColor: '#ec4899',
+    ambientColor: 'rgba(236, 72, 153, 0.1)',
+    gridColor: 'rgba(244, 114, 182, 0.13)',
+    groundBgColor: '#1a0d26',
+    description: 'Bầu trời rực ánh tà dương huyền ảo, đốm lửa hoàng hôn lung linh.',
+  },
+  SNOW: {
+    type: 'SNOW',
+    name: 'Snow',
+    vietnameseName: 'Tuyết Trắng Mùa Đông',
+    icon: '❄️',
+    themeColor: '#38bdf8',
+    ambientColor: 'rgba(224, 242, 254, 0.09)',
+    gridColor: 'rgba(186, 230, 253, 0.14)',
+    groundBgColor: '#081426',
+    description: 'Bông tuyết trắng tinh khôi lãng đãng rơi, phủ một lớp băng giá lạnh.',
+  },
+};
+
+export const WEATHER_CYCLE: WeatherType[] = ['RAIN', 'DAWN', 'DESERT', 'SUNSET', 'SNOW'];
+

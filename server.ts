@@ -28,9 +28,9 @@ async function startServer() {
 
   const rooms = new Map<string, Room>();
 
-  // Default public multiplayer arena: Pure PvP between real human players (0 AI bots!)
-  const publicGame = new GameEngine(0);
-  publicGame.setMaxBots(0);
+  // Default public multiplayer arena: Active battle with 5 bots by default so action is always live
+  const publicGame = new GameEngine(5);
+  publicGame.setMaxBots(5);
   rooms.set('public', {
     id: 'public',
     game: publicGame,
@@ -138,7 +138,9 @@ async function startServer() {
             targetRoom.clients.add(ws);
             socketRooms.set(ws, targetRoomId);
 
-            targetRoom.game.addPlayer(playerId, msg.name, msg.color, msg.tankClass, false);
+            if (!msg.isSpectator) {
+              targetRoom.game.addPlayer(playerId, msg.name, msg.color, msg.tankClass, false);
+            }
 
             // Send full initial state
             const initPayload: ServerMessage = {
@@ -152,6 +154,24 @@ async function startServer() {
             break;
           }
 
+          case 'SET_SPECTATOR': {
+            if (currentRoom && currentRoomId) {
+              if (msg.isSpectator) {
+                currentRoom.game.removePlayer(playerId);
+              } else {
+                currentRoom.game.addPlayer(
+                  playerId,
+                  msg.name || 'Chiến Binh',
+                  msg.color || '#2563eb',
+                  msg.tankClass || 'STRIKER',
+                  false
+                );
+              }
+              broadcastLobbyState();
+            }
+            break;
+          }
+
           case 'INPUT': {
             if (currentRoom) {
               currentRoom.game.setInput(playerId, {
@@ -162,6 +182,16 @@ async function startServer() {
                 turretAngle: Number(msg.turretAngle) || 0,
                 isFiring: !!msg.isFiring,
               });
+              if (msg.skillTrigger) {
+                currentRoom.game.useSkill(playerId, msg.skillTrigger);
+              }
+            }
+            break;
+          }
+
+          case 'USE_SKILL': {
+            if (currentRoom && msg.skill) {
+              currentRoom.game.useSkill(playerId, msg.skill);
             }
             break;
           }

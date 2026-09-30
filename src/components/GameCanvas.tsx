@@ -4,7 +4,10 @@ import {
   Bullet,
   Obstacle,
   PowerUpCrate,
+  Landmine,
   TANK_CLASSES,
+  WeatherType,
+  WEATHER_CONFIGS,
 } from '../types/game';
 import { sounds } from '../utils/audio';
 
@@ -30,15 +33,36 @@ interface Decal {
   createdAt: number;
 }
 
+interface WeatherParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  alpha: number;
+  swayOffset: number;
+  splashAge: number;
+}
+
 interface GameCanvasProps {
   myPlayerId: string;
   tanks: PlayerTank[];
   bullets: Bullet[];
   obstacles: Obstacle[];
   powerUps: PowerUpCrate[];
+  landmines?: Landmine[];
   worldSize: { width: number; height: number };
   is25DMode?: boolean;
   zoomScale?: number;
+  isSpectator?: boolean;
+  spectatorTargetId?: string | 'free';
+  freeCameraPos?: { x: number; y: number };
+  onSelectSpectatorTarget?: (id: string) => void;
+  currentWeather?: WeatherType;
+  focusBeacon?: { x: number; y: number; timestamp: number } | null;
+  onPanCamera?: (camX: number, camY: number) => void;
+  onFocusWorldPos?: (worldX: number, worldY: number) => void;
+  isFreeCameraActive?: boolean;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -47,9 +71,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   bullets,
   obstacles,
   powerUps,
+  landmines = [],
   worldSize,
   is25DMode = true,
   zoomScale = 0.75,
+  isSpectator = false,
+  spectatorTargetId = 'free',
+  freeCameraPos,
+  onSelectSpectatorTarget,
+  currentWeather = 'DAWN',
+  focusBeacon,
+  onPanCamera,
+  onFocusWorldPos,
+  isFreeCameraActive = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -60,6 +94,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const screenShakeRef = useRef(0);
   const prevBulletsCountRef = useRef(0);
   const prevTanksStateRef = useRef<Map<string, { hp: number; isDead: boolean }>>(new Map());
+
+  // Weather Ambient System
+  const weatherParticlesRef = useRef<WeatherParticle[]>([]);
+  const lightningFlashRef = useRef<number>(0);
+  const nextLightningRef = useRef<number>(Date.now() + 10000);
 
   // Track recoil state per tank: tankId -> recoilOffset (0 to 1)
   const tankRecoilRef = useRef<Map<string, number>>(new Map());
@@ -181,12 +220,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.scale(dpr, dpr);
 
       // Camera lerp
-      const myTank = tanks.find((t) => t.id === myPlayerId);
-      const targetCamX = myTank ? myTank.x : worldSize.width / 2;
-      const targetCamY = myTank ? myTank.y : worldSize.height / 2;
+      let targetCamX = worldSize.width / 2;
+      let targetCamY = worldSize.height / 2;
 
-      cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.12;
-      cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.12;
+      if (isSpectator) {
+        if (spectatorTargetId === 'free' && freeCameraPos) {
+          targetCamX = freeCameraPos.x;
+          targetCamY = freeCameraPos.y;
+        } else {
+          const targetTank =
+            tanks.find((t) => t.id === spectatorTargetId && !t.isDead) ||
+            tanks.find((t) => !t.isDead) ||
+            tanks.find((t) => t.id === spectatorTargetId);
+          if (targetTank) {
+            targetCamX = targetTank.x;
+            targetCamY = targetTank.y;
+          } else if (freeCameraPos) {
+            targetCamX = freeCameraPos.x;
+            targetCamY = freeCameraPos.y;
+          }
+        }
+      } else {
+        if (isFreeCameraActive && freeCameraPos) {
+          targetCamX = freeCameraPos.x;
+          targetCamY = freeCameraPos.y;
+        } else {
+          const myTank = tanks.find((t) => t.id === myPlayerId);
+          targetCamX = myTank ? myTank.x : worldSize.width / 2;
+          targetCamY = myTank ? myTank.y : worldSize.height / 2;
+        }
+      }
+
+      cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.14;
+      cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.14;
 
       // Screen shake
       let shakeOffsetX = 0;
@@ -217,10 +283,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      const weatherCfg = WEATHER_CONFIGS[currentWeather] || WEATHER_CONFIGS.DAWN;
+
       // ==========================================
       // 1. TERRAIN BASE & GROUND TEXTURE
       // ==========================================
-      ctx.fillStyle = '#171d28'; // Deep tactical ground
+      ctx.fillStyle = weatherCfg.groundBgColor; // Dynamic weather tactical ground
       ctx.fillRect(0, 0, width, height);
 
       ctx.save();
@@ -229,14 +297,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.scale(zoom, zoom);
       ctx.translate(-camX, -camY);
 
-      // Tactical grid with 2.5D ambient tint
+      // Tactical grid with dynamic weather ambient tint
       const gridSize = 100;
       const startX = Math.floor(Math.max(0, viewLeft) / gridSize) * gridSize;
       const endX = Math.min(worldSize.width, viewLeft + viewWidth + gridSize);
       const startY = Math.floor(Math.max(0, viewTop) / gridSize) * gridSize;
       const endY = Math.min(worldSize.height, viewTop + viewHeight + gridSize);
 
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+      ctx.strokeStyle = weatherCfg.gridColor;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let x = startX; x <= endX; x += gridSize) {
@@ -311,6 +379,51 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.arc(0, 0, 42, 0, Math.PI * 2);
           ctx.fill();
         }
+        ctx.restore();
+      }
+
+      // ==========================================
+      // 2.5 FOCUS PING BEACON ON THE BATTLEFIELD
+      // ==========================================
+      if (focusBeacon && now - focusBeacon.timestamp < 3800) {
+        const elapsed = (now - focusBeacon.timestamp) / 1000;
+        const bx = focusBeacon.x;
+        const by = focusBeacon.y;
+
+        ctx.save();
+        ctx.translate(bx, by);
+
+        // 3 concentric expanding holographic rings
+        for (let rIdx = 0; rIdx < 3; rIdx++) {
+          const ringProgress = (elapsed + rIdx * 0.33) % 1;
+          const ringRadius = 15 + ringProgress * 110;
+          const ringAlpha = Math.max(0, 1 - ringProgress);
+
+          ctx.strokeStyle = `rgba(245, 158, 11, ${ringAlpha * 0.9})`;
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, ringRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Center spinning tactical reticle
+        ctx.rotate(now / 350);
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(-34, 0);
+        ctx.lineTo(-10, 0);
+        ctx.moveTo(10, 0);
+        ctx.lineTo(34, 0);
+        ctx.moveTo(0, -34);
+        ctx.lineTo(0, -10);
+        ctx.moveTo(0, 10);
+        ctx.lineTo(0, 34);
+        ctx.stroke();
         ctx.restore();
       }
 
@@ -443,6 +556,51 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.lineTo(crate.x - 30, crate.y - 250);
         ctx.closePath();
         ctx.fill();
+      }
+
+      // Render Tactical Plasma Landmines on ground
+      for (const mine of landmines) {
+        ctx.save();
+        const pulse = 0.5 + Math.sin((now - mine.createdAt) / 140) * 0.5;
+        const isArmed = now - mine.createdAt >= 400;
+
+        // Laser perimeter circle
+        ctx.strokeStyle = isArmed ? `rgba(239, 68, 68, ${0.35 + pulse * 0.45})` : 'rgba(234, 179, 8, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(mine.x, mine.y, 28, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Ground Mine Disc
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(mine.x, mine.y, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 4 Corner bolts
+        ctx.fillStyle = '#94a3b8';
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
+          ctx.beginPath();
+          ctx.arc(mine.x + Math.cos(a) * 8, mine.y + Math.sin(a) * 8, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Inner Core Warning LED
+        ctx.fillStyle = isArmed ? (pulse > 0.4 ? '#ef4444' : '#991b1b') : '#eab308';
+        ctx.shadowColor = isArmed ? '#ef4444' : '#eab308';
+        ctx.shadowBlur = isArmed ? 8 : 4;
+        ctx.beginPath();
+        ctx.arc(mine.x, mine.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.restore();
       }
 
       // ==========================================
@@ -629,6 +787,74 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           else if (crate.type === 'RAPID_FIRE') symbol = '⚡⚡';
           ctx.fillText(symbol, 0, -7);
 
+          // Floating Tactical Item Name & Description Badge
+          const crateDetails: Record<
+            string,
+            { label: string; color: string; bg: string; icon: string }
+          > = {
+            REPAIR: {
+              label: 'CỨU THƯƠNG (+50HP)',
+              color: '#34d399',
+              bg: 'rgba(6, 78, 59, 0.9)',
+              icon: '✚',
+            },
+            SHIELD: {
+              label: 'KHIÊN GIÁP (100)',
+              color: '#a5b4fc',
+              bg: 'rgba(49, 46, 129, 0.9)',
+              icon: '🛡️',
+            },
+            TRIPLE_SHOT: {
+              label: 'ĐẠN 3 TIA',
+              color: '#fde047',
+              bg: 'rgba(113, 63, 18, 0.9)',
+              icon: '🔱',
+            },
+            SPEED_BOOST: {
+              label: 'NITRO TURBO',
+              color: '#38bdf8',
+              bg: 'rgba(12, 74, 110, 0.9)',
+              icon: '⚡',
+            },
+            RAPID_FIRE: {
+              label: 'BẮN LIÊN THANH',
+              color: '#f87171',
+              bg: 'rgba(127, 29, 29, 0.9)',
+              icon: '🔥',
+            },
+          };
+
+          const info = crateDetails[crate.type] || {
+            label: 'LINH KIỆN',
+            color: '#fbbf24',
+            bg: 'rgba(15, 23, 42, 0.9)',
+            icon: '📦',
+          };
+
+          // Draw pill badge above crate
+          const badgeY = -30;
+          const badgeW = 92;
+          const badgeH = 14;
+
+          ctx.fillStyle = info.bg;
+          ctx.strokeStyle = info.color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          if (typeof ctx.roundRect === 'function') {
+            ctx.roundRect(-badgeW / 2, badgeY, badgeW, badgeH, 4);
+          } else {
+            ctx.rect(-badgeW / 2, badgeY, badgeW, badgeH);
+          }
+          ctx.fill();
+          ctx.stroke();
+
+          // Text label
+          ctx.fillStyle = info.color;
+          ctx.font = 'bold 8px Plus Jakarta Sans, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${info.icon} ${info.label}`, 0, badgeY + badgeH / 2);
+
           ctx.restore();
 
         } else if (entity.type === 'tank') {
@@ -687,6 +913,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(0, -5, 29, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
+            ctx.restore();
+          }
+
+          // 3. Tactical [Space] FORCE SHIELD Skill Barrier
+          if (tank.skills && now < tank.skills.shieldUntil) {
+            ctx.save();
+            const hexPulse = 1 + Math.sin(now / 100) * 0.06;
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.arc(0, -6, 36 * hexPulse, 0, Math.PI * 2);
+            ctx.stroke();
+
+            const hexGrad = ctx.createRadialGradient(0, -6, 10, 0, -6, 36 * hexPulse);
+            hexGrad.addColorStop(0, 'rgba(0, 240, 255, 0.05)');
+            hexGrad.addColorStop(0.7, 'rgba(0, 240, 255, 0.22)');
+            hexGrad.addColorStop(1, 'rgba(0, 240, 255, 0.55)');
+            ctx.fillStyle = hexGrad;
+            ctx.fill();
+
+            // Orbiting energy nodes
+            for (let nodeIdx = 0; nodeIdx < 4; nodeIdx++) {
+              const nodeAngle = (now / 350) + (nodeIdx * (Math.PI / 2));
+              const nx = Math.cos(nodeAngle) * 36 * hexPulse;
+              const ny = -6 + Math.sin(nodeAngle) * 36 * hexPulse;
+              ctx.fillStyle = '#ffffff';
+              ctx.beginPath();
+              ctx.arc(nx, ny, 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.shadowBlur = 0;
             ctx.restore();
           }
 
@@ -750,14 +1009,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = '#0284c7';
           ctx.fillRect(13, -3, 3, 6);
 
-          // Nitro & Component Speed Booster Flames (when speed boosted)
-          if (tank.activePowerUp) {
-            const isNitro = tank.activePowerUp.type === 'SPEED_BOOST';
-            const flameLen = isNitro ? 16 + Math.random() * 10 : 8 + Math.random() * 5;
+          // Nitro & Component Speed Booster Flames (when powerup or [Shift] Boost Skill active)
+          const isSkillBoost = !!(tank.skills && now < tank.skills.boostUntil);
+          if (tank.activePowerUp || isSkillBoost) {
+            const isNitro = isSkillBoost || tank.activePowerUp?.type === 'SPEED_BOOST';
+            const flameLen = isNitro ? 22 + Math.random() * 12 : 8 + Math.random() * 5;
             const flameGrad = ctx.createLinearGradient(-20, 0, -20 - flameLen, 0);
             if (isNitro) {
-              flameGrad.addColorStop(0, '#38bdf8');
-              flameGrad.addColorStop(0.5, '#0284c7');
+              flameGrad.addColorStop(0, '#ffffff');
+              flameGrad.addColorStop(0.2, '#38bdf8');
+              flameGrad.addColorStop(0.7, '#0284c7');
               flameGrad.addColorStop(1, 'transparent');
             } else {
               flameGrad.addColorStop(0, '#fbbf24');
@@ -767,15 +1028,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = flameGrad;
             // Left exhaust pipe jet
             ctx.beginPath();
-            ctx.moveTo(-20, -6);
+            ctx.moveTo(-20, -7);
             ctx.lineTo(-20 - flameLen, -4);
-            ctx.lineTo(-20, -2);
+            ctx.lineTo(-20, -1);
             ctx.fill();
             // Right exhaust pipe jet
             ctx.beginPath();
-            ctx.moveTo(-20, 2);
+            ctx.moveTo(-20, 1);
             ctx.lineTo(-20 - flameLen, 4);
-            ctx.lineTo(-20, 6);
+            ctx.lineTo(-20, 7);
             ctx.fill();
           }
 
@@ -804,6 +1065,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           ctx.fillStyle = barrelGrad;
           ctx.fillRect(0, -barrelWidth / 2, currentBarrelLen, barrelWidth);
+
+          // [R] Barrage Skill: Overcharge electricity arcs along barrel
+          if (tank.skills && now < tank.skills.barrageUntil) {
+            ctx.strokeStyle = '#f43f5e';
+            ctx.lineWidth = 1.5;
+            ctx.shadowColor = '#f43f5e';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.moveTo(4, 0);
+            for (let bx = 6; bx < currentBarrelLen; bx += 5) {
+              ctx.lineTo(bx, (Math.random() - 0.5) * (barrelWidth + 4));
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
 
           // Double-baffle muzzle brake at tip
           ctx.fillStyle = '#0f172a';
@@ -921,34 +1197,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(8, -10 - flamePulse, 5, 0, Math.PI * 2);
             ctx.arc(0, -14, 6, 0, Math.PI * 2);
             ctx.fill();
-            ctx.restore();
-          }
-
-          // Next Loaded Ammo Badge Indicator (above health bar)
-          if (tank.nextAmmoType && tank.id === myPlayerId) {
-            ctx.save();
-            const ammoLabels: Record<string, { name: string; color: string; icon: string }> = {
-              EXPLOSIVE: { name: 'ĐẠN NỔ', color: '#ef4444', icon: '💥' },
-              TRIPLE: { name: 'ĐẠN CHÙM', color: '#fbbf24', icon: '🔱' },
-              PLASMA: { name: 'ĐẠN LAZE', color: '#00f0ff', icon: '⚡' },
-              CRYO: { name: 'ĐẠN BĂNG', color: '#38bdf8', icon: '❄️' },
-              INCENDIARY: { name: 'ĐẠN LỬA', color: '#f97316', icon: '🔥' },
-              RICOCHET: { name: 'ĐẠN NẢY', color: '#c084fc', icon: '🪃' },
-              PIERCING: { name: 'XUYÊN GIÁP', color: '#10b981', icon: '🎯' },
-              STANDARD: { name: 'TIÊU CHUẨN', color: '#94a3b8', icon: '•' },
-            };
-            const ammo = ammoLabels[tank.nextAmmoType] || ammoLabels.STANDARD;
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-            ctx.fillRect(-38, barY - 22, 76, 14);
-            ctx.strokeStyle = ammo.color;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(-38, barY - 22, 76, 14);
-
-            ctx.fillStyle = ammo.color;
-            ctx.font = 'bold 9px Plus Jakarta Sans, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(`${ammo.icon} ${ammo.name}`, 0, barY - 15);
             ctx.restore();
           }
 
@@ -1073,7 +1321,148 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
+      // ==========================================
+      // 10. DYNAMIC WEATHER & ATMOSPHERE SYSTEM
+      // ==========================================
+      const weatherList = weatherParticlesRef.current;
+      const targetCount = 140;
+      while (weatherList.length < targetCount) {
+        weatherList.push({
+          x: viewLeft + Math.random() * (viewWidth + 400) - 200,
+          y: viewTop + Math.random() * (viewHeight + 400) - 200,
+          vx: 0,
+          vy: 0,
+          size: Math.random() * 2.5 + 1.2,
+          alpha: Math.random() * 0.6 + 0.3,
+          swayOffset: Math.random() * Math.PI * 2,
+          splashAge: 0,
+        });
+      }
+
+      if (currentWeather === 'RAIN') {
+        // --- RAIN PARTICLES & PUDDLE RIPPLES ---
+        ctx.save();
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.45)';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        for (const wp of weatherList) {
+          wp.x += 4.5;
+          wp.y += 18;
+          if (wp.y > viewTop + viewHeight + 80) {
+            wp.y = viewTop - 60 - Math.random() * 40;
+            wp.x = viewLeft + Math.random() * (viewWidth + 400) - 200;
+          }
+          if (wp.x > viewLeft + viewWidth + 200) {
+            wp.x = viewLeft - 100;
+          }
+
+          ctx.moveTo(wp.x, wp.y);
+          ctx.lineTo(wp.x + 3.5, wp.y + 16);
+        }
+        ctx.stroke();
+
+        // Puddle splashes on ground
+        ctx.strokeStyle = 'rgba(147, 197, 253, 0.25)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 20; i++) {
+          const wp = weatherList[i];
+          if (wp) {
+            const rippleR = ((now / 20 + i * 15) % 18) + 2;
+            ctx.beginPath();
+            ctx.ellipse(wp.x, wp.y, rippleR * 1.5, rippleR * 0.75, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+
+        // Lightning flash calculation
+        if (now > nextLightningRef.current) {
+          lightningFlashRef.current = 1.0;
+          nextLightningRef.current = now + 12000 + Math.random() * 15000;
+          sounds.playExplosion();
+        }
+      } else if (currentWeather === 'SNOW') {
+        // --- SNOW PARTICLES & FROST FLAKES ---
+        ctx.save();
+        ctx.fillStyle = 'rgba(240, 249, 255, 0.85)';
+        for (const wp of weatherList) {
+          wp.x += Math.sin(now / 600 + wp.swayOffset) * 1.2 + 0.3;
+          wp.y += 1.8 + wp.size * 0.4;
+          if (wp.y > viewTop + viewHeight + 60) {
+            wp.y = viewTop - 30;
+            wp.x = viewLeft + Math.random() * (viewWidth + 200) - 100;
+          }
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, wp.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else if (currentWeather === 'DESERT') {
+        // --- DESERT SAND DUST & HEAT WAVES ---
+        ctx.save();
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.45)';
+        for (const wp of weatherList) {
+          wp.x += 8.5 + wp.size * 2;
+          wp.y += Math.sin(now / 400 + wp.swayOffset) * 1.2 + 0.5;
+          if (wp.x > viewLeft + viewWidth + 100) {
+            wp.x = viewLeft - 100;
+            wp.y = viewTop + Math.random() * (viewHeight + 100);
+          }
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, wp.size * 0.9, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else if (currentWeather === 'SUNSET') {
+        // --- DUSK FIREFLIES & TWILIGHT EMBERS ---
+        ctx.save();
+        for (const wp of weatherList) {
+          wp.x += Math.sin(now / 900 + wp.swayOffset) * 0.8;
+          wp.y -= 1.1 + wp.size * 0.2;
+          if (wp.y < viewTop - 40) {
+            wp.y = viewTop + viewHeight + 30;
+            wp.x = viewLeft + Math.random() * (viewWidth + 200) - 100;
+          }
+          const pulse = (Math.sin(now / 400 + wp.swayOffset) + 1) * 0.5;
+          ctx.fillStyle = `rgba(251, 146, 60, ${0.3 + pulse * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, wp.size * (1 + pulse * 0.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      } else if (currentWeather === 'DAWN') {
+        // --- DAWN SUNBEAM MOTES & MORNING MIST ---
+        ctx.save();
+        ctx.fillStyle = 'rgba(254, 215, 170, 0.35)';
+        for (const wp of weatherList) {
+          wp.x += 0.8;
+          wp.y += Math.sin(now / 1100 + wp.swayOffset) * 0.6;
+          if (wp.x > viewLeft + viewWidth + 50) {
+            wp.x = viewLeft - 50;
+          }
+          ctx.beginPath();
+          ctx.arc(wp.x, wp.y, wp.size * 1.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
       ctx.restore(); // Restore world transform
+
+      // ==========================================
+      // 11. FULLSCREEN ATMOSPHERE TINT & LIGHTNING
+      // ==========================================
+      ctx.save();
+      ctx.fillStyle = weatherCfg.ambientColor;
+      ctx.fillRect(0, 0, width, height);
+
+      if (lightningFlashRef.current > 0) {
+        ctx.fillStyle = `rgba(224, 242, 254, ${lightningFlashRef.current * 0.35})`;
+        ctx.fillRect(0, 0, width, height);
+        lightningFlashRef.current = Math.max(0, lightningFlashRef.current - 0.08);
+      }
+      ctx.restore();
+
       ctx.restore(); // Restore canvas scaling
 
       animId = requestAnimationFrame(render);
@@ -1081,12 +1470,148 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [tanks, bullets, obstacles, powerUps, worldSize, myPlayerId, is25DMode, zoomScale]);
+  }, [
+    tanks,
+    bullets,
+    obstacles,
+    powerUps,
+    worldSize,
+    myPlayerId,
+    is25DMode,
+    zoomScale,
+    isSpectator,
+    spectatorTargetId,
+    freeCameraPos,
+    currentWeather,
+    focusBeacon,
+    isFreeCameraActive,
+  ]);
+
+  // Drag-to-pan camera state
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, camX: 0, camY: 0, button: 0 });
+  const hasDraggedRef = useRef(false);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Left-click (0) in Spectator OR Right-click (2) / Middle-click (1) in any mode
+    if (isSpectator || e.button === 2 || e.button === 1) {
+      isDraggingRef.current = true;
+      hasDraggedRef.current = false;
+      dragStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        camX: cameraRef.current.x,
+        camY: cameraRef.current.y,
+        button: e.button,
+      };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isDraggingRef.current) {
+      const dx = e.clientX - dragStartRef.current.mouseX;
+      const dy = e.clientY - dragStartRef.current.mouseY;
+
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        hasDraggedRef.current = true;
+      }
+
+      const zoom = zoomScale || 0.75;
+      const newCamX = Math.max(100, Math.min(worldSize.width - 100, dragStartRef.current.camX - dx / zoom));
+      const newCamY = Math.max(100, Math.min(worldSize.height - 100, dragStartRef.current.camY - dy / zoom));
+
+      cameraRef.current.x = newCamX;
+      cameraRef.current.y = newCamY;
+
+      if (onPanCamera) {
+        onPanCamera(newCamX, newCamY);
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+    }
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // If it was a drag motion, do not trigger single click
+    if (hasDraggedRef.current) {
+      hasDraggedRef.current = false;
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const zoom = zoomScale || 0.75;
+    const viewWidth = canvas.clientWidth / zoom;
+    const viewHeight = canvas.clientHeight / zoom;
+    const viewLeft = cameraRef.current.x - viewWidth / 2;
+    const viewTop = cameraRef.current.y - viewHeight / 2;
+
+    const worldX = Math.max(50, Math.min(worldSize.width - 50, viewLeft + clickX / zoom));
+    const worldY = Math.max(50, Math.min(worldSize.height - 50, viewTop + clickY / zoom));
+
+    if (isSpectator) {
+      // Find clicked tank within 45px radius
+      let foundTank = false;
+      for (const tank of tanks) {
+        if (tank.isDead) continue;
+        const dist = Math.hypot(tank.x - worldX, tank.y - worldY);
+        if (dist < 45) {
+          onSelectSpectatorTarget?.(tank.id);
+          foundTank = true;
+          break;
+        }
+      }
+      if (!foundTank && onFocusWorldPos) {
+        onFocusWorldPos(worldX, worldY);
+      }
+    } else {
+      // In player mode: Right-click focus or middle click
+      if (onFocusWorldPos && (e.button === 2 || e.button === 1 || e.altKey)) {
+        onFocusWorldPos(worldX, worldY);
+      }
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!hasDraggedRef.current && onFocusWorldPos) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const zoom = zoomScale || 0.75;
+      const viewWidth = canvas.clientWidth / zoom;
+      const viewHeight = canvas.clientHeight / zoom;
+      const viewLeft = cameraRef.current.x - viewWidth / 2;
+      const viewTop = cameraRef.current.y - viewHeight / 2;
+
+      const worldX = Math.max(50, Math.min(worldSize.width - 50, viewLeft + clickX / zoom));
+      const worldY = Math.max(50, Math.min(worldSize.height - 50, viewTop + clickY / zoom));
+      onFocusWorldPos(worldX, worldY);
+    }
+  };
 
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-full block cursor-crosshair select-none touch-none"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onClick={handleCanvasClick}
+      onContextMenu={handleContextMenu}
+      className={`w-full h-full block select-none touch-none ${
+        isSpectator ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+      }`}
     />
   );
 };
