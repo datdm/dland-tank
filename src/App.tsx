@@ -25,6 +25,11 @@ import {
   SkillType,
   Landmine,
   PerkId,
+  StormZone,
+  TeamScore,
+  BossInfo,
+  BaseZone,
+  Team,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -67,6 +72,10 @@ import {
   Video,
   Crosshair,
   AlertTriangle,
+  Crown,
+  Skull,
+  Flame,
+  Heart,
 } from 'lucide-react';
 
 export default function App() {
@@ -105,6 +114,15 @@ export default function App() {
   const [events, setEvents] = useState<CombatEvent[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [ping, setPing] = useState(18);
+
+  // Dedicated Game Modes State: Battle Royale, Team Deathmatch, Boss Raid
+  const [storm, setStorm] = useState<StormZone | null>(null);
+  const [teamScore, setTeamScore] = useState<TeamScore | null>(null);
+  const [boss, setBoss] = useState<BossInfo | null>(null);
+  const [bases, setBases] = useState<BaseZone[]>([]);
+  const [aliveCount, setAliveCount] = useState<number>(0);
+  const [totalParticipants, setTotalParticipants] = useState<number>(0);
+  const [brWinner, setBrWinner] = useState<{ id: string; name: string; color: string; kills: number } | null>(null);
 
   const [isScoreboardOpen, setIsScoreboardOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -148,6 +166,7 @@ export default function App() {
     mode: GameMode;
     botCount: number;
     roomId?: string;
+    team?: Team;
   }>({
     name: 'Chỉ Huy',
     color: '#2563eb',
@@ -392,6 +411,16 @@ export default function App() {
               setLandmines(msg.snapshot.landmines || []);
               setLeaderboard(msg.snapshot.leaderboard);
 
+              // Unpack Game Mode State
+              if (msg.snapshot.storm) setStorm(msg.snapshot.storm);
+              if (msg.snapshot.teamScore) setTeamScore(msg.snapshot.teamScore);
+              setBoss(msg.snapshot.boss || null);
+              if (msg.snapshot.bases) setBases(msg.snapshot.bases);
+              if (msg.snapshot.aliveCount !== undefined) setAliveCount(msg.snapshot.aliveCount);
+              if (msg.snapshot.totalParticipants !== undefined) setTotalParticipants(msg.snapshot.totalParticipants);
+              setBrWinner(msg.snapshot.brWinner || null);
+              if (msg.snapshot.mode) setGameMode(msg.snapshot.mode);
+
               // De-duplicate initial events by id
               const seenEvts = new Set<string>();
               const uniqueEvents = (msg.recentEvents || []).filter((e) => {
@@ -411,6 +440,16 @@ export default function App() {
               setObstacles(msg.snapshot.obstacles);
               setLandmines(msg.snapshot.landmines || []);
               setLeaderboard(msg.snapshot.leaderboard);
+
+              // Unpack Game Mode State on each tick
+              if (msg.snapshot.storm) setStorm(msg.snapshot.storm);
+              if (msg.snapshot.teamScore) setTeamScore(msg.snapshot.teamScore);
+              setBoss(msg.snapshot.boss || null);
+              if (msg.snapshot.bases) setBases(msg.snapshot.bases);
+              if (msg.snapshot.aliveCount !== undefined) setAliveCount(msg.snapshot.aliveCount);
+              if (msg.snapshot.totalParticipants !== undefined) setTotalParticipants(msg.snapshot.totalParticipants);
+              setBrWinner(msg.snapshot.brWinner || null);
+              if (msg.snapshot.mode) setGameMode(msg.snapshot.mode);
               break;
             }
 
@@ -782,7 +821,8 @@ export default function App() {
     mode: GameMode,
     selectedBots: number,
     customRoomId?: string,
-    spectator: boolean = false
+    spectator: boolean = false,
+    team?: Team
   ) => {
     setGameMode(mode);
     setBotCount(selectedBots);
@@ -797,6 +837,7 @@ export default function App() {
       mode,
       botCount: selectedBots,
       roomId: customRoomId || 'public',
+      team,
     };
 
     const transmitJoin = () => {
@@ -810,6 +851,7 @@ export default function App() {
           roomId: customRoomId || 'public',
           botCount: selectedBots,
           isSpectator: spectator,
+          team,
         };
         socketRef.current.send(JSON.stringify(joinMsg));
       }
@@ -1137,6 +1179,10 @@ export default function App() {
           onPanCamera={handlePanCamera}
           onFocusWorldPos={handleFocusWorldPos}
           isFreeCameraActive={isFreeCameraActive}
+          storm={storm}
+          boss={boss}
+          bases={bases}
+          gameMode={gameMode}
         />
 
         {/* Floating Re-center Camera Button when user has panned freely */}
@@ -1150,6 +1196,197 @@ export default function App() {
               <Crosshair className="w-4 h-4" />
               <span>QUAY VỀ XE CỦA TÔI (WASD / Space)</span>
             </button>
+          </div>
+        )}
+
+        {/* Top-Center Dedicated Game Mode Tactical Status Widget */}
+        {isInGame && (
+          <div className="absolute top-2.5 sm:top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex flex-col items-center gap-1.5 max-w-xl w-[94%] sm:w-auto">
+            {/* 1. BATTLE ROYALE MODE HUD */}
+            {(gameMode === 'BATTLE_ROYALE' || (storm && storm.active)) && (
+              <div className="flex flex-col items-center gap-1">
+                <div className="bg-slate-950/92 border border-purple-500/70 shadow-2xl shadow-purple-500/20 backdrop-blur-md px-3.5 py-1.5 rounded-2xl flex items-center gap-2.5 sm:gap-3.5 text-xs">
+                  <div className="flex items-center gap-1.5 text-purple-300 font-mono font-black tracking-tight whitespace-nowrap">
+                    <Zap className="w-4 h-4 text-purple-400 animate-pulse" />
+                    <span>BO GIAI ĐOẠN {storm?.phase || 1}</span>
+                  </div>
+
+                  <div className="h-4 w-px bg-slate-800" />
+
+                  {storm?.isShrinking ? (
+                    <div className="text-amber-300 font-bold flex items-center gap-1 animate-pulse whitespace-nowrap">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ĐANG THU HẸP! ({Math.round(storm.currentRadius)}m)</span>
+                    </div>
+                  ) : (
+                    <div className="text-sky-300 font-mono whitespace-nowrap">
+                      <span>Co bo: </span>
+                      <strong className="text-white font-bold">{Math.round(storm?.phaseTimeLeft || 60)}s</strong>
+                      <span className="text-slate-400 text-[10px] ml-1">({Math.round(storm?.currentRadius || 2400)}m)</span>
+                    </div>
+                  )}
+
+                  <div className="h-4 w-px bg-slate-800" />
+
+                  <div className="flex items-center gap-1 text-emerald-300 font-mono font-bold whitespace-nowrap">
+                    <Users className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{aliveCount || tanks.filter((t) => !t.isDead).length}/{totalParticipants || tanks.length} Xe</span>
+                  </div>
+                </div>
+
+                {myTank?.inStorm && !myTank.isDead && (
+                  <div className="bg-rose-950/95 border border-rose-500 text-rose-200 px-3.5 py-1 rounded-full text-xs font-black animate-bounce shadow-xl flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-400" />
+                    <span>⚠️ BẠN ĐANG NGOÀI VÒNG BO! RÚT MÁU (-{Math.round(storm?.dps || 5)} HP/s)!</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 2. TEAM DEATHMATCH MODE HUD */}
+            {gameMode === 'TEAM_DEATHMATCH' && teamScore && (
+              <div className="flex flex-col items-center gap-1">
+                <div className="bg-slate-950/92 border border-slate-700/80 shadow-2xl backdrop-blur-md px-4 py-2 rounded-2xl flex flex-col items-center gap-1.5 min-w-[290px] sm:min-w-[360px]">
+                  <div className="w-full flex items-center justify-between font-mono text-xs font-black">
+                    <div className="flex items-center gap-1.5 text-rose-400">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+                      <span>ĐỘI ĐỎ: {teamScore.red}</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-bold px-2 py-0.5 rounded bg-slate-800 border border-slate-700/60">
+                      ĐÍCH: 30 KILLS
+                    </span>
+                    <div className="flex items-center gap-1.5 text-sky-400">
+                      <span>ĐỘI XANH: {teamScore.blue}</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse" />
+                    </div>
+                  </div>
+
+                  {/* Dual tug-of-war bar towards 30 kills */}
+                  <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
+                    <div
+                      className="h-full bg-rose-600 transition-all duration-300"
+                      style={{ width: `${Math.min(50, (teamScore.red / 30) * 50)}%` }}
+                    />
+                    <div className="flex-1 bg-slate-950" />
+                    <div
+                      className="h-full bg-sky-600 transition-all duration-300 ml-auto"
+                      style={{ width: `${Math.min(50, (teamScore.blue / 30) * 50)}%` }}
+                    />
+                  </div>
+
+                  {myTank?.inHealingBase && (
+                    <div className="text-[11px] text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
+                      <span>💚 Đang hồi máu trong căn cứ (+10 HP/s & Giáp)</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 3. BOSS RAID MODE HUD (Or when World Boss Leviathan is active in Public) */}
+            {(gameMode === 'BOSS_RAID' || (boss && boss.isAlive)) && (
+              <div className="flex flex-col items-center gap-1">
+                {boss && boss.isAlive ? (
+                  <div className="bg-slate-950/95 border-2 border-amber-500/80 shadow-2xl shadow-amber-500/20 backdrop-blur-md px-4 py-2 rounded-2xl flex flex-col items-center gap-1.5 min-w-[300px] sm:min-w-[420px]">
+                    <div className="w-full flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 text-amber-400 font-mono font-black">
+                        <Skull className="w-4 h-4 text-amber-400 animate-bounce" />
+                        <span>SIÊU BOSS LEVIATHAN (CẤP THẾ GIỚI)</span>
+                      </div>
+                      <span className="text-[11px] font-mono text-emerald-400 font-bold">
+                        {Math.ceil(boss.hp)} / {boss.maxHp} HP
+                      </span>
+                    </div>
+
+                    {/* Boss HP Bar */}
+                    <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden border border-amber-500/40 p-0.5">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-red-600 via-amber-500 to-emerald-400 transition-all duration-150"
+                        style={{ width: `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%` }}
+                      />
+                    </div>
+
+                    {boss.shield > 0 && (
+                      <div className="w-full flex items-center justify-between text-[10px] text-cyan-300 font-mono">
+                        <span>🛡️ GIÁP NĂNG LƯỢNG:</span>
+                        <span>{Math.ceil(boss.shield)} / 250</span>
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                      <span>📍 Pháo Đài Trung Tâm</span>
+                      <span>•</span>
+                      <span className="text-amber-300 font-semibold">Cẩn thận đạn pháo 4 nòng & Sóng xung kích EMP!</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-950/90 border border-amber-500/40 px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-2 text-amber-300 shadow-lg">
+                    <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      Boss Leviathan hồi sinh sau: <strong className="text-white font-mono">{Math.round(boss?.respawnTimeLeft || 0)}s</strong>. Nhặt 4 rương báu tại trung tâm!
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Winner Winner Chicken Dinner Modal Celebration */}
+        {brWinner && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
+            <div className="bg-gradient-to-b from-amber-950/90 via-slate-900 to-slate-950 border-2 border-amber-400 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl shadow-amber-500/30 space-y-4">
+              <div className="mx-auto w-20 h-20 rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center animate-bounce">
+                <Crown className="w-10 h-10 text-amber-300" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs uppercase font-mono font-bold text-amber-400 tracking-widest">
+                  BATTLE ROYALE CHAMPION
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-white font-mono">
+                  WINNER WINNER CHICKEN DINNER!
+                </h2>
+              </div>
+              <div className="p-4 bg-slate-950/80 rounded-2xl border border-amber-500/40 text-left space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-400 font-mono">Chiến binh chiến thắng:</span>
+                  <span className="font-bold text-amber-300 text-base">{brWinner.name}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span>Tổng số hạ gục:</span>
+                  <span className="font-mono text-emerald-400 font-bold">{brWinner.kills} hạ gục</span>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400 animate-pulse">
+                🔄 Trận đấu sinh tồn mới sẽ tự động tái thiết lập trong giây lát...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Team Deathmatch Winner Modal Celebration */}
+        {teamScore && teamScore.winner && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
+            <div
+              className={`border-2 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl space-y-4 ${
+                teamScore.winner === 'RED'
+                  ? 'bg-rose-950/90 border-rose-500 shadow-rose-500/30'
+                  : 'bg-sky-950/90 border-sky-500 shadow-sky-500/30'
+              }`}
+            >
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-4xl animate-bounce">
+                🏆
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono">
+                {teamScore.winner === 'RED' ? '🔴 ĐỘI ĐỎ CHIẾN THẮNG!' : '🔵 ĐỘI XANH CHIẾN THẮNG!'}
+              </h2>
+              <p className="text-xs text-slate-300">
+                Đã hoàn thành xuất sắc 30 điểm hạ gục trước đối phương!
+              </p>
+              <p className="text-xs text-slate-400 animate-pulse font-mono">
+                🔄 Vòng đấu mới sẽ tự động bắt đầu sau giây lát...
+              </p>
+            </div>
           </div>
         )}
 
@@ -1191,6 +1428,9 @@ export default function App() {
                     onFocusWorldPos={handleFocusWorldPos}
                     cameraPos={freeCameraPos}
                     focusBeacon={focusBeacon}
+                    storm={storm}
+                    boss={boss}
+                    bases={bases}
                   />
                 </div>
               )}
@@ -1219,6 +1459,9 @@ export default function App() {
                   onFocusWorldPos={handleFocusWorldPos}
                   cameraPos={freeCameraPos}
                   focusBeacon={focusBeacon}
+                  storm={storm}
+                  boss={boss}
+                  bases={bases}
                 />
               )}
 

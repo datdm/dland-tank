@@ -17,6 +17,12 @@ import {
   PerkId,
   PerkCard,
   ALL_PERK_CARDS,
+  GameMode,
+  Team,
+  StormZone,
+  TeamScore,
+  BossInfo,
+  BaseZone,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
@@ -70,12 +76,70 @@ export class GameEngine {
   private nextPowerUpSpawn: number = 0;
   private nextEventId: number = 1;
 
+  // Mode fields
+  private mode: GameMode = 'PUBLIC';
+  private bases: BaseZone[] = [
+    { team: 'RED', x: 80, y: 1700, w: 380, h: 800 },
+    { team: 'BLUE', x: 3740, y: 1700, w: 380, h: 800 },
+  ];
+
+  // Battle Royale Storm Zone
+  private stormZone: StormZone = {
+    centerX: WORLD_WIDTH / 2,
+    centerY: WORLD_HEIGHT / 2,
+    currentRadius: 2400,
+    targetRadius: 2400,
+    phase: 1,
+    maxPhases: 5,
+    phaseTimeLeft: 60,
+    isShrinking: false,
+    active: false,
+    dps: 5,
+  };
+  private brWinner: { id: string; name: string; color: string; kills: number } | null = null;
+  private brRoundResetTimer: number = 0;
+  private lastStormDamageTick: number = 0;
+
+  // Team Deathmatch Score
+  private teamScore: TeamScore = {
+    red: 0,
+    blue: 0,
+    targetKills: 30,
+    winner: null,
+  };
+  private tdmRoundResetTimer: number = 0;
+  private lastBaseRegenTick: number = 0;
+
+  // World Boss Leviathan
+  private boss: BossInfo | null = null;
+  private nextBossSpawnTime: number = 0;
+  private bossNextFireTime: number = 0;
+  private bossNextSkillTime: number = 0;
+  private bossMoveAngle: number = 0;
+  private bossNextMoveChange: number = 0;
+
   private generateEventId(): string {
     return `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${this.nextEventId++}`;
   }
 
-  constructor(defaultBots: number = 0) {
+  constructor(defaultBots: number = 0, mode: GameMode = 'PUBLIC') {
+    this.mode = mode;
     this.maxBots = Math.max(0, defaultBots);
+
+    if (this.mode === 'BATTLE_ROYALE') {
+      this.stormZone.active = true;
+      this.stormZone.currentRadius = 2400;
+      this.stormZone.targetRadius = 2400;
+      this.stormZone.phase = 1;
+      this.stormZone.phaseTimeLeft = 60;
+    }
+
+    if (this.mode === 'BOSS_RAID') {
+      this.spawnBoss();
+    } else {
+      this.nextBossSpawnTime = Date.now() + 180000;
+    }
+
     this.initMap();
     this.spawnInitialPowerUps();
     if (this.maxBots > 0) {
@@ -323,15 +387,39 @@ export class GameEngine {
     name: string,
     color: string,
     tankClass: TankClass,
-    isBot: boolean = false
+    isBot: boolean = false,
+    team?: Team
   ): PlayerTank {
     const stats = TANK_CLASSES[tankClass] || TANK_CLASSES.STRIKER;
-    const spawn = this.findSafeSpawnPosition();
+    let spawn = this.findSafeSpawnPosition();
+
+    let assignedTeam: Team = team && team !== 'NONE' ? team : 'NONE';
+    let assignedColor = color || stats.colorPreset;
+
+    if (this.mode === 'TEAM_DEATHMATCH') {
+      if (assignedTeam === 'NONE') {
+        let redCount = 0;
+        let blueCount = 0;
+        for (const t of this.tanks.values()) {
+          if (t.team === 'RED') redCount++;
+          if (t.team === 'BLUE') blueCount++;
+        }
+        assignedTeam = redCount <= blueCount ? 'RED' : 'BLUE';
+      }
+
+      if (assignedTeam === 'RED') {
+        assignedColor = '#ef4444';
+        spawn = { x: 200 + Math.random() * 150, y: 1800 + Math.random() * 600 };
+      } else {
+        assignedColor = '#3b82f6';
+        spawn = { x: 3800 + Math.random() * 150, y: 1800 + Math.random() * 600 };
+      }
+    }
 
     const tank: PlayerTank = {
       id,
       name: name || (isBot ? `Bot [${tankClass}]` : 'Chiến Binh Mới'),
-      color: color || stats.colorPreset,
+      color: assignedColor,
       tankClass,
       x: spawn.x,
       y: spawn.y,
@@ -369,6 +457,9 @@ export class GameEngine {
       maxExp: 100,
       perks: [],
       pendingPerkChoices: [],
+      team: assignedTeam,
+      inStorm: false,
+      inHealingBase: false,
     };
 
     this.tanks.set(id, tank);
@@ -713,7 +804,12 @@ export class GameEngine {
       this.nextPowerUpSpawn = now + 8000;
     }
 
-    // 2. Bot AI updates
+    // 2. Mode mechanics
+    this.updateStorm(deltaTime, now);
+    this.updateTdm(deltaTime, now);
+    this.updateBoss(deltaTime, now);
+
+    // 3. Bot AI updates
     this.updateBots(now);
 
     // 3. Process Tank Movements & Fire
@@ -956,6 +1052,15 @@ export class GameEngine {
 
           this.bullets.splice(i, 1);
           break;
+        }
+      }
+
+      // Collision with World Boss Leviathan
+      if (this.boss && this.boss.isAlive) {
+        if (distance(b.x, b.y, this.boss.x, this.boss.y) < 65 + BULLET_RADIUS) {
+          this.damageBoss(b);
+          this.bullets.splice(i, 1);
+          continue;
         }
       }
     }
@@ -1245,6 +1350,14 @@ export class GameEngine {
   }
 
   private damageTank(target: PlayerTank, bullet: Bullet) {
+    // Friendly fire check in TDM
+    if (this.mode === 'TEAM_DEATHMATCH' && bullet.shooterId) {
+      const shooter = this.tanks.get(bullet.shooterId);
+      if (shooter && shooter.team && target.team && shooter.team === target.team && shooter.team !== 'NONE') {
+        return;
+      }
+    }
+
     let damageRemaining = bullet.damage;
 
     // Shield absorption first
@@ -1279,11 +1392,12 @@ export class GameEngine {
       // AoE Splash damage to all other nearby tanks in 80px radius
       for (const [otherId, otherTank] of this.tanks) {
         if (otherId === target.id || otherTank.isDead) continue;
+        if (this.mode === 'TEAM_DEATHMATCH' && target.team && otherTank.team && target.team === otherTank.team) continue;
         if (distance(target.x, target.y, otherTank.x, otherTank.y) < 80) {
           otherTank.hp = Math.max(0, otherTank.hp - 20);
           if (otherTank.hp <= 0) {
             otherTank.isDead = true;
-            otherTank.respawnCountdown = 3.5;
+            otherTank.respawnCountdown = this.mode === 'BATTLE_ROYALE' ? 0 : 3.5;
             otherTank.deaths += 1;
           }
         }
@@ -1293,7 +1407,7 @@ export class GameEngine {
     if (target.hp <= 0) {
       target.hp = 0;
       target.isDead = true;
-      target.respawnCountdown = 3.5;
+      target.respawnCountdown = this.mode === 'BATTLE_ROYALE' ? 0 : 3.5;
       target.deaths += 1;
       target.streak = 0;
 
@@ -1304,6 +1418,37 @@ export class GameEngine {
         shooter.streak += 1;
         const streakBonus = Math.min(shooter.streak * 20, 100);
         shooter.score += 100 + streakBonus;
+
+        // TDM Score Update
+        if (this.mode === 'TEAM_DEATHMATCH') {
+          if (shooter.team === 'RED') {
+            this.teamScore.red += 1;
+          } else if (shooter.team === 'BLUE') {
+            this.teamScore.blue += 1;
+          }
+
+          if (this.teamScore.red >= this.teamScore.targetKills && !this.teamScore.winner) {
+            this.teamScore.winner = 'RED';
+            this.tdmRoundResetTimer = Date.now() + 10000;
+            this.addEvent({
+              id: this.generateEventId(),
+              type: 'kill',
+              text: `🏆 ĐỘI ĐỎ ĐÃ ĐẠT 30 KILLS VÀ CHIẾN THẮNG TRẬN ĐẤU ĐỘI!`,
+              timestamp: Date.now(),
+              color: '#ef4444',
+            });
+          } else if (this.teamScore.blue >= this.teamScore.targetKills && !this.teamScore.winner) {
+            this.teamScore.winner = 'BLUE';
+            this.tdmRoundResetTimer = Date.now() + 10000;
+            this.addEvent({
+              id: this.generateEventId(),
+              type: 'kill',
+              text: `🏆 ĐỘI XANH ĐÃ ĐẠT 30 KILLS VÀ CHIẾN THẮNG TRẬN ĐẤU ĐỘI!`,
+              timestamp: Date.now(),
+              color: '#3b82f6',
+            });
+          }
+        }
 
         let killText = `🎯 ${shooter.name} đã tiêu diệt đối thủ ${target.name}!`;
         if (shooter.streak >= 3) {
@@ -1321,6 +1466,381 @@ export class GameEngine {
           victimName: target.name,
           color: '#ef4444',
         });
+      }
+    }
+  }
+
+  public spawnBoss() {
+    const cx = WORLD_WIDTH / 2;
+    const cy = WORLD_HEIGHT / 2;
+    this.boss = {
+      id: `boss_leviathan_${Date.now()}`,
+      name: 'Siêu Xe Tăng Leviathan',
+      x: cx,
+      y: cy,
+      angle: 0,
+      turretAngle: 0,
+      hp: 1000,
+      maxHp: 1000,
+      shield: 250,
+      isAlive: true,
+      phase: 1,
+      nextSkillTime: Date.now() + 20000,
+      respawnTimeLeft: 0,
+    };
+    this.addEvent({
+      id: this.generateEventId(),
+      type: 'powerup',
+      text: `☠️ [WORLD BOSS] SIÊU XE TĂNG BOSS LEVIATHAN (1000 HP, 4 NÒNG PHÁO) ĐÃ XUẤT HIỆN TẠI PHÁO ĐÀI TRUNG TÂM!`,
+      timestamp: Date.now(),
+      color: '#f59e0b',
+    });
+  }
+
+  private damageBoss(bullet: Bullet) {
+    if (!this.boss || !this.boss.isAlive) return;
+
+    let dmg = bullet.damage;
+    if (bullet.modifier === 'EXPLOSIVE') dmg = Math.round(dmg * 1.3);
+
+    if (this.boss.shield > 0) {
+      if (this.boss.shield >= dmg) {
+        this.boss.shield -= dmg;
+        dmg = 0;
+      } else {
+        dmg -= this.boss.shield;
+        this.boss.shield = 0;
+      }
+    }
+
+    this.boss.hp = Math.max(0, this.boss.hp - dmg);
+
+    const shooter = this.tanks.get(bullet.shooterId);
+    if (shooter) {
+      shooter.score += 15;
+      this.addTankExp(shooter, Math.round(bullet.damage * 0.9));
+    }
+
+    if (this.boss.hp <= 0) {
+      this.boss.hp = 0;
+      this.boss.isAlive = false;
+      this.nextBossSpawnTime = Date.now() + (this.mode === 'BOSS_RAID' ? 25000 : 180000);
+
+      // Spawn 4 Legendary Golden Crates
+      const cx = this.boss.x;
+      const cy = this.boss.y;
+      const lootTypes: PowerUpType[] = ['REPAIR', 'SHIELD', 'RAPID_FIRE', 'TRIPLE_SHOT'];
+      const offsets = [
+        { dx: -70, dy: -70 },
+        { dx: 70, dy: -70 },
+        { dx: -70, dy: 70 },
+        { dx: 70, dy: 70 },
+      ];
+      for (let i = 0; i < 4; i++) {
+        this.powerUps.push({
+          id: `legendary_crate_${Date.now()}_${i}`,
+          type: lootTypes[i],
+          x: clamp(cx + offsets[i].dx, 100, WORLD_WIDTH - 100),
+          y: clamp(cy + offsets[i].dy, 100, WORLD_HEIGHT - 100),
+          createdAt: Date.now(),
+          duration: 35000,
+        });
+      }
+
+      if (shooter) {
+        shooter.kills += 3;
+        shooter.score += 800;
+        this.addTankExp(shooter, 500);
+      }
+
+      this.addEvent({
+        id: this.generateEventId(),
+        type: 'kill',
+        text: `👑 [SĂN BOSS] ${shooter ? shooter.name : 'Chiến Binh'} cùng đồng đội đã TIÊU DIỆT THÀNH CÔNG SIÊU BOSS LEVIATHAN!`,
+        timestamp: Date.now(),
+        color: '#f59e0b',
+      });
+    }
+  }
+
+  private updateBoss(deltaTime: number, now: number) {
+    if (!this.boss || !this.boss.isAlive) {
+      if (this.boss) {
+        this.boss.respawnTimeLeft = Math.max(0, (this.nextBossSpawnTime - now) / 1000);
+      }
+      if (this.mode === 'BOSS_RAID' || (this.mode === 'PUBLIC' && now >= this.nextBossSpawnTime)) {
+        if (!this.boss || now >= this.nextBossSpawnTime) {
+          this.spawnBoss();
+        }
+      }
+      return;
+    }
+
+    const boss = this.boss;
+
+    if (now > this.bossNextMoveChange) {
+      this.bossNextMoveChange = now + 2500 + Math.random() * 2000;
+      this.bossMoveAngle = Math.random() * Math.PI * 2;
+    }
+
+    const speed = 1.6;
+    const targetX = boss.x + Math.cos(this.bossMoveAngle) * speed;
+    const targetY = boss.y + Math.sin(this.bossMoveAngle) * speed;
+    const cx = WORLD_WIDTH / 2;
+    const cy = WORLD_HEIGHT / 2;
+    if (distance(targetX, targetY, cx, cy) < 220) {
+      boss.x = targetX;
+      boss.y = targetY;
+      boss.angle += 0.02;
+    } else {
+      this.bossMoveAngle = Math.atan2(cy - boss.y, cx - boss.x);
+    }
+
+    let nearestTank: PlayerTank | null = null;
+    let minDist = 1400;
+    for (const tank of this.tanks.values()) {
+      if (tank.isDead) continue;
+      const d = distance(boss.x, boss.y, tank.x, tank.y);
+      if (d < minDist) {
+        minDist = d;
+        nearestTank = tank;
+      }
+    }
+
+    if (nearestTank) {
+      const aimAngle = Math.atan2(nearestTank.y - boss.y, nearestTank.x - boss.x);
+      boss.turretAngle = aimAngle;
+
+      if (now > this.bossNextFireTime) {
+        this.bossNextFireTime = now + 1500;
+        const offsets = [-0.12, 0.12];
+        for (const off of offsets) {
+          const angle = aimAngle + off;
+          this.bullets.push({
+            id: `boss_b_${Date.now()}_${Math.random()}`,
+            shooterId: boss.id,
+            shooterName: 'Boss Leviathan',
+            x: boss.x + Math.cos(angle) * 75,
+            y: boss.y + Math.sin(angle) * 75,
+            vx: Math.cos(angle) * 8.5,
+            vy: Math.sin(angle) * 8.5,
+            damage: 32,
+            rangeLeft: 1100,
+            color: '#f59e0b',
+            isHeavy: true,
+            modifier: 'EXPLOSIVE',
+          });
+        }
+        if (minDist < 600) {
+          const flakAngles = [aimAngle - 0.45, aimAngle + 0.45];
+          for (const fa of flakAngles) {
+            this.bullets.push({
+              id: `boss_flak_${Date.now()}_${Math.random()}`,
+              shooterId: boss.id,
+              shooterName: 'Boss Leviathan',
+              x: boss.x + Math.cos(fa) * 65,
+              y: boss.y + Math.sin(fa) * 65,
+              vx: Math.cos(fa) * 9.5,
+              vy: Math.sin(fa) * 9.5,
+              damage: 22,
+              rangeLeft: 700,
+              color: '#00f0ff',
+              modifier: 'PLASMA',
+            });
+          }
+        }
+      }
+
+      if (now > boss.nextSkillTime) {
+        boss.nextSkillTime = now + 24000;
+        boss.lastSkillName = 'EMP_SHOCKWAVE';
+        for (const tank of this.tanks.values()) {
+          if (tank.isDead) continue;
+          const d = distance(boss.x, boss.y, tank.x, tank.y);
+          if (d < 380) {
+            tank.hp = Math.max(1, tank.hp - 45);
+            tank.slowUntil = now + 3500;
+          }
+        }
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'powerup',
+          text: `⚡ [BOSS LEVIATHAN] KÍCH HOẠT SÓNG XUNG KÍCH EMP (-45 HP & Làm chậm toàn bộ xung quanh)!`,
+          timestamp: now,
+          color: '#00f0ff',
+        });
+      }
+    }
+  }
+
+  public resetBattleRoyaleRound() {
+    this.brWinner = null;
+    this.stormZone.active = true;
+    this.stormZone.currentRadius = 2400;
+    this.stormZone.targetRadius = 2400;
+    this.stormZone.phase = 1;
+    this.stormZone.phaseTimeLeft = 60;
+    this.stormZone.isShrinking = false;
+    this.stormZone.dps = 5;
+
+    for (const tank of this.tanks.values()) {
+      this.respawnPlayer(tank.id);
+    }
+
+    this.addEvent({
+      id: this.generateEventId(),
+      type: 'powerup',
+      text: `🔄 [VÒNG BO SINH TỒN] Trận đấu sinh tồn mới đã bắt đầu! Vòng bo an toàn trong 60s!`,
+      timestamp: Date.now(),
+      color: '#38bdf8',
+    });
+  }
+
+  private updateStorm(deltaTime: number, now: number) {
+    if (!this.stormZone.active && this.mode !== 'BATTLE_ROYALE') return;
+    this.stormZone.active = true;
+
+    if (this.brWinner && now >= this.brRoundResetTimer) {
+      this.resetBattleRoyaleRound();
+      return;
+    }
+
+    if (!this.stormZone.isShrinking) {
+      this.stormZone.phaseTimeLeft -= deltaTime;
+      if (this.stormZone.phaseTimeLeft <= 0) {
+        this.stormZone.isShrinking = true;
+        const phaseTargets = [2400, 1600, 1050, 550, 220, 60];
+        const nextTarget = phaseTargets[Math.min(this.stormZone.phase, phaseTargets.length - 1)];
+        this.stormZone.targetRadius = nextTarget;
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'powerup',
+          text: `⚠️ [VÒNG BO SINH TỒN] Vòng bo đang thu hẹp về bán kính ${nextTarget}m! Hãy di chuyển vào vùng an toàn!`,
+          timestamp: now,
+          color: '#c084fc',
+        });
+      }
+    } else {
+      const shrinkSpeed = 38 * deltaTime;
+      if (this.stormZone.currentRadius > this.stormZone.targetRadius) {
+        this.stormZone.currentRadius = Math.max(this.stormZone.targetRadius, this.stormZone.currentRadius - shrinkSpeed);
+      } else {
+        this.stormZone.currentRadius = this.stormZone.targetRadius;
+        this.stormZone.isShrinking = false;
+        this.stormZone.phase += 1;
+        this.stormZone.phaseTimeLeft = Math.max(25, 60 - this.stormZone.phase * 8);
+        this.stormZone.dps = 4 + this.stormZone.phase * 2;
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'powerup',
+          text: `⚡ [VÒNG BO GIAI ĐOẠN ${this.stormZone.phase}] Vòng bo tạm dừng co lại trong ${Math.round(this.stormZone.phaseTimeLeft)}s!`,
+          timestamp: now,
+          color: '#a855f7',
+        });
+      }
+    }
+
+    if (now - this.lastStormDamageTick >= 800) {
+      this.lastStormDamageTick = now;
+      for (const tank of this.tanks.values()) {
+        if (tank.isDead) continue;
+        const dist = distance(tank.x, tank.y, this.stormZone.centerX, this.stormZone.centerY);
+        if (dist > this.stormZone.currentRadius) {
+          tank.inStorm = true;
+          tank.hp = Math.max(0, tank.hp - Math.round(this.stormZone.dps * 0.8));
+          if (tank.hp <= 0 && !tank.isDead) {
+            tank.hp = 0;
+            tank.isDead = true;
+            tank.deaths += 1;
+            tank.streak = 0;
+            this.addEvent({
+              id: this.generateEventId(),
+              type: 'kill',
+              text: `⚡ ${tank.name} đã bị BÃO ĐIỆN TỪ thiêu rụi bên ngoài vòng bo!`,
+              timestamp: now,
+              color: '#ef4444',
+            });
+          }
+        } else {
+          tank.inStorm = false;
+        }
+      }
+    }
+
+    if (this.mode === 'BATTLE_ROYALE' && !this.brWinner && this.tanks.size >= 2) {
+      const aliveTanks = Array.from(this.tanks.values()).filter((t) => !t.isDead);
+      if (aliveTanks.length === 1) {
+        const survivor = aliveTanks[0];
+        this.brWinner = {
+          id: survivor.id,
+          name: survivor.name,
+          color: survivor.color,
+          kills: survivor.kills,
+        };
+        this.brRoundResetTimer = now + 12000;
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'kill',
+          text: `👑 WINNER WINNER CHICKEN DINNER! ${survivor.name} LÀ CHIẾN THẦN DUY NHẤT SỐNG SÓT!`,
+          timestamp: now,
+          color: '#f59e0b',
+        });
+      }
+    }
+  }
+
+  private updateTdm(deltaTime: number, now: number) {
+    if (this.mode !== 'TEAM_DEATHMATCH') return;
+
+    if (this.teamScore.winner && now >= this.tdmRoundResetTimer) {
+      this.teamScore = {
+        red: 0,
+        blue: 0,
+        targetKills: 30,
+        winner: null,
+      };
+      for (const tank of this.tanks.values()) {
+        this.respawnPlayer(tank.id);
+      }
+      return;
+    }
+
+    if (now - this.lastBaseRegenTick >= 500) {
+      this.lastBaseRegenTick = now;
+      for (const tank of this.tanks.values()) {
+        if (tank.isDead) continue;
+        tank.inHealingBase = false;
+
+        for (const base of this.bases) {
+          const inBase =
+            tank.x >= base.x &&
+            tank.x <= base.x + base.w &&
+            tank.y >= base.y &&
+            tank.y <= base.y + base.h;
+
+          if (inBase) {
+            if (tank.team === base.team) {
+              tank.inHealingBase = true;
+              tank.hp = Math.min(tank.maxHp, tank.hp + 10);
+              tank.shield = Math.min(100, tank.shield + 8);
+            } else if (tank.team && tank.team !== 'NONE') {
+              tank.hp = Math.max(0, tank.hp - 16);
+              if (tank.hp <= 0) {
+                tank.hp = 0;
+                tank.isDead = true;
+                tank.respawnCountdown = 3.5;
+                tank.deaths += 1;
+                this.addEvent({
+                  id: this.generateEventId(),
+                  type: 'kill',
+                  text: `⚡ ${tank.name} đã bị Hệ Thống Laser Phòng Thủ Căn Cứ tiêu diệt!`,
+                  timestamp: now,
+                  color: '#ef4444',
+                });
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -1457,6 +1977,8 @@ export class GameEngine {
       .sort((a, b) => b.score - a.score || b.kills - a.kills)
       .slice(0, 10);
 
+    const aliveCount = Array.from(this.tanks.values()).filter((t) => !t.isDead).length;
+
     return {
       tanks: Array.from(this.tanks.values()),
       bullets: this.bullets,
@@ -1465,6 +1987,14 @@ export class GameEngine {
       landmines: this.landmines,
       leaderboard: sortedLeaderboard,
       serverTime: Date.now(),
+      mode: this.mode,
+      storm: this.stormZone,
+      teamScore: this.teamScore,
+      boss: this.boss,
+      aliveCount,
+      totalParticipants: this.tanks.size,
+      brWinner: this.brWinner,
+      bases: this.bases,
     };
   }
 

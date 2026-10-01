@@ -28,12 +28,43 @@ async function startServer() {
 
   const rooms = new Map<string, Room>();
 
-  // Default public multiplayer arena: Pure PvP between real online players (0 bots)
-  const publicGame = new GameEngine(0);
+  // Pre-provision dedicated multiplayer arenas
+  // 1. FFA Public Arena (Pure PvP)
+  const publicGame = new GameEngine(0, 'PUBLIC');
   publicGame.setMaxBots(0);
   rooms.set('public', {
     id: 'public',
     game: publicGame,
+    clients: new Set<WebSocket>(),
+    isCustomAI: false,
+  });
+
+  // 2. Battle Royale Arena (Vòng Bo Sinh Tồn với bot lấp đầy 10 xe)
+  const brGame = new GameEngine(9, 'BATTLE_ROYALE');
+  brGame.setMaxBots(9);
+  rooms.set('br', {
+    id: 'br',
+    game: brGame,
+    clients: new Set<WebSocket>(),
+    isCustomAI: false,
+  });
+
+  // 3. Team Deathmatch Arena (🔴 Đỏ vs 🔵 Xanh 30 Kills)
+  const tdmGame = new GameEngine(8, 'TEAM_DEATHMATCH');
+  tdmGame.setMaxBots(8);
+  rooms.set('tdm', {
+    id: 'tdm',
+    game: tdmGame,
+    clients: new Set<WebSocket>(),
+    isCustomAI: false,
+  });
+
+  // 4. Boss Raid Leviathan (Săn Siêu Boss Thế Giới)
+  const bossGame = new GameEngine(6, 'BOSS_RAID');
+  bossGame.setMaxBots(6);
+  rooms.set('boss', {
+    id: 'boss',
+    game: bossGame,
     clients: new Set<WebSocket>(),
     isCustomAI: false,
   });
@@ -113,16 +144,36 @@ async function startServer() {
               }
             }
 
-            const isAIMode = msg.mode === 'AI';
-            const cleanRoom = (msg.roomId || 'public').trim().toLowerCase().slice(0, 24);
-            const targetRoomId = isAIMode ? `ai_${playerId}` : (cleanRoom ? cleanRoom : 'public');
+            const mode = msg.mode || 'PUBLIC';
+            const isAIMode = mode === 'AI';
+            const cleanRoom = (msg.roomId || '').trim().toLowerCase().slice(0, 24);
+
+            let targetRoomId = 'public';
+            if (isAIMode) {
+              targetRoomId = `ai_${playerId}`;
+            } else if (mode === 'BATTLE_ROYALE') {
+              targetRoomId = cleanRoom ? `br_${cleanRoom}` : 'br';
+            } else if (mode === 'TEAM_DEATHMATCH') {
+              targetRoomId = cleanRoom ? `tdm_${cleanRoom}` : 'tdm';
+            } else if (mode === 'BOSS_RAID') {
+              targetRoomId = cleanRoom ? `boss_${cleanRoom}` : 'boss';
+            } else {
+              targetRoomId = cleanRoom || 'public';
+            }
 
             let targetRoom = rooms.get(targetRoomId);
             if (!targetRoom) {
-              const desiredBots = isAIMode
-                ? (typeof msg.botCount === 'number' ? Math.max(0, Math.min(14, msg.botCount)) : 5)
-                : 0;
-              const newGame = new GameEngine(desiredBots);
+              let desiredBots = 0;
+              if (isAIMode) {
+                desiredBots = typeof msg.botCount === 'number' ? Math.max(0, Math.min(14, msg.botCount)) : 5;
+              } else if (mode === 'BATTLE_ROYALE') {
+                desiredBots = 9;
+              } else if (mode === 'TEAM_DEATHMATCH') {
+                desiredBots = 8;
+              } else if (mode === 'BOSS_RAID') {
+                desiredBots = 6;
+              }
+              const newGame = new GameEngine(desiredBots, mode);
               newGame.setMaxBots(desiredBots);
               targetRoom = {
                 id: targetRoomId,
@@ -134,8 +185,6 @@ async function startServer() {
             } else {
               if (isAIMode && typeof msg.botCount === 'number') {
                 targetRoom.game.setMaxBots(msg.botCount);
-              } else if (!isAIMode) {
-                targetRoom.game.setMaxBots(0);
               }
             }
 
@@ -143,7 +192,7 @@ async function startServer() {
             socketRooms.set(ws, targetRoomId);
 
             if (!msg.isSpectator) {
-              targetRoom.game.addPlayer(playerId, msg.name, msg.color, msg.tankClass, false);
+              targetRoom.game.addPlayer(playerId, msg.name, msg.color, msg.tankClass, false, msg.team);
             }
 
             // Send full initial state

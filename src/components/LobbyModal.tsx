@@ -3,6 +3,7 @@ import {
   TankClass,
   TANK_CLASSES,
   GameMode,
+  Team,
   PublicPlayerInfo,
   WeatherType,
   WEATHER_CONFIGS,
@@ -28,6 +29,9 @@ import {
   Swords,
   HelpCircle,
   CloudRain,
+  Skull,
+  Crown,
+  Flame,
 } from 'lucide-react';
 import { sounds } from '../utils/audio';
 import { TankVisual } from './TankVisual';
@@ -41,7 +45,8 @@ interface LobbyModalProps {
     mode: GameMode,
     botCount: number,
     customRoomId?: string,
-    isSpectator?: boolean
+    isSpectator?: boolean,
+    team?: Team
   ) => void;
   onlineCount: number;
   isSocketConnected: boolean;
@@ -89,6 +94,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
   const [copiedLink, setCopiedLink] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<Team>('RED');
 
   const activeWeatherCfg = WEATHER_CONFIGS[currentWeather || 'RAIN'] || WEATHER_CONFIGS.RAIN;
 
@@ -119,7 +125,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
 
   const handleCopyInviteLink = () => {
     const url = new URL(window.location.href);
-    url.searchParams.set('mode', 'PUBLIC');
+    url.searchParams.set('mode', mode);
     if (roomId && roomId !== 'public') {
       url.searchParams.set('room', roomId);
     } else {
@@ -149,7 +155,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
     const finalName = name.trim() || (mode === 'AI' ? 'Tập Sự AI' : 'Chiến Binh');
     sounds.playShoot();
     const finalBots = mode === 'AI' ? botCount : 0;
-    onJoin(finalName, color, tankClass, mode, finalBots, roomId);
+    onJoin(finalName, color, tankClass, mode, finalBots, roomId, false, selectedTeam);
   };
 
   return (
@@ -273,77 +279,191 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
             </div>
           </div>
 
-          {/* 2 GAME MODES SELECTOR */}
+          {/* 5 GAME MODES SELECTOR */}
           <div className="mt-3">
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-              Chọn Chế Độ Chơi
-            </label>
-            <div className="grid grid-cols-2 gap-2.5">
-              {/* Mode 2: Public Online */}
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                Chọn Chế Độ Chiến Đấu
+              </label>
+              <span className="text-[10px] font-mono text-amber-400 font-bold bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded">
+                5 CHẾ ĐỘ ĐỈNH CAO
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {/* 1. PUBLIC FFA */}
               <button
                 type="button"
                 onClick={() => setMode('PUBLIC')}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
                   mode === 'PUBLIC'
                     ? 'bg-sky-500/15 border-sky-500 ring-2 ring-sky-500/50 text-white shadow-lg shadow-sky-500/10'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`p-1.5 rounded-lg ${
-                        mode === 'PUBLIC' ? 'bg-sky-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <Globe className="w-4 h-4" />
-                    </div>
-                    <span className="font-extrabold text-sm text-white">Chế Độ Online</span>
+                  <div className="flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-sky-400" />
+                    <span className="font-extrabold text-xs text-white">Đấu Đơn FFA</span>
                   </div>
-                  {mode === 'PUBLIC' && (
-                    <span className="text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
-                      ONLINE
-                    </span>
-                  )}
+                  <span className="text-[9px] bg-sky-500/20 text-sky-300 px-1 py-0.2 rounded font-mono font-bold">
+                    PVP
+                  </span>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
-                  Chiến đấu PvP trực tiếp giữa những người chơi thật với nhau theo thời gian thực.
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  Chiến trường tự do, hỗn chiến sinh tử không giới hạn.
                 </p>
               </button>
 
-              {/* Mode 1: Bot AI */}
+              {/* 2. BATTLE ROYALE */}
               <button
                 type="button"
-                onClick={() => setMode('AI')}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-                  mode === 'AI'
+                onClick={() => setMode('BATTLE_ROYALE')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                  mode === 'BATTLE_ROYALE'
+                    ? 'bg-purple-500/15 border-purple-500 ring-2 ring-purple-500/50 text-white shadow-lg shadow-purple-500/10'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-purple-400" />
+                    <span className="font-extrabold text-xs text-white">Vòng Bo Sinh Tồn</span>
+                  </div>
+                  <span className="text-[9px] bg-purple-500/20 text-purple-300 px-1 py-0.2 rounded font-mono font-bold">
+                    BATTLE ROYALE
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  Bão điện từ co lại sau 60s, tìm người sống sót cuối cùng!
+                </p>
+              </button>
+
+              {/* 3. TEAM DEATHMATCH */}
+              <button
+                type="button"
+                onClick={() => setMode('TEAM_DEATHMATCH')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                  mode === 'TEAM_DEATHMATCH'
+                    ? 'bg-rose-500/15 border-rose-500 ring-2 ring-rose-500/50 text-white shadow-lg shadow-rose-500/10'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Swords className="w-4 h-4 text-rose-400" />
+                    <span className="font-extrabold text-xs text-white">Đấu Đội 🔴 vs 🔵</span>
+                  </div>
+                  <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1 py-0.2 rounded font-mono font-bold">
+                    30 KILLS
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  Đội Đỏ vs Đội Xanh, căn cứ hồi máu riêng, chạm 30 kills thắng.
+                </p>
+              </button>
+
+              {/* 4. BOSS RAID */}
+              <button
+                type="button"
+                onClick={() => setMode('BOSS_RAID')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                  mode === 'BOSS_RAID'
                     ? 'bg-amber-500/15 border-amber-500 ring-2 ring-amber-500/50 text-white shadow-lg shadow-amber-500/10'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`p-1.5 rounded-lg ${
-                        mode === 'AI' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      <Bot className="w-4 h-4" />
-                    </div>
-                    <span className="font-extrabold text-sm text-white">Chế Độ Bot AI</span>
+                  <div className="flex items-center gap-1.5">
+                    <Skull className="w-4 h-4 text-amber-400" />
+                    <span className="font-extrabold text-xs text-white">Săn Boss Leviathan</span>
                   </div>
-                  {mode === 'AI' && (
-                    <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-bold">
-                      TẬP LUYỆN
-                    </span>
-                  )}
+                  <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.2 rounded font-mono font-bold">
+                    BOSS RAID
+                  </span>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
-                  Tự do chọn số lượng Bot AI để luyện tập ngắm bắn, thử đạn và làm quen bản đồ chiến trường.
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  Hợp lực diệt Siêu Boss Leviathan 1000 HP nhặt 4 rương báu.
+                </p>
+              </button>
+
+              {/* 5. SOLO AI PRACTICE */}
+              <button
+                type="button"
+                onClick={() => setMode('AI')}
+                className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
+                  mode === 'AI'
+                    ? 'bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/50 text-white shadow-lg shadow-emerald-500/10'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Bot className="w-4 h-4 text-emerald-400" />
+                    <span className="font-extrabold text-xs text-white">Luyện Tập Bot AI</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-mono font-bold">
+                    SOLO
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  Tập luyện ngắm bắn, thử đạn và kỹ năng với bot AI.
                 </p>
               </button>
             </div>
           </div>
+
+          {/* Team Selection when TDM mode is selected */}
+          {mode === 'TEAM_DEATHMATCH' && (
+            <div className="mt-2.5 p-2.5 bg-slate-950/80 border border-rose-500/30 rounded-xl space-y-1.5">
+              <label className="block text-xs font-bold text-slate-300">
+                Chọn Phe Chiến Đấu (Team):
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTeam('RED')}
+                  className={`py-2 px-3 rounded-lg border font-mono font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    selectedTeam === 'RED'
+                      ? 'bg-rose-600 text-white border-rose-400 ring-2 ring-rose-500/50 shadow-md shadow-rose-600/30'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-400 animate-pulse" />
+                  <span>🔴 ĐỘI ĐỎ (RED)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedTeam('BLUE')}
+                  className={`py-2 px-3 rounded-lg border font-mono font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    selectedTeam === 'BLUE'
+                      ? 'bg-sky-600 text-white border-sky-400 ring-2 ring-sky-500/50 shadow-md shadow-sky-600/30'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse" />
+                  <span>🔵 ĐỘI XANH (BLUE)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Battle Royale Briefing */}
+          {mode === 'BATTLE_ROYALE' && (
+            <div className="mt-2.5 p-2.5 bg-slate-950/80 border border-purple-500/30 rounded-xl flex items-center gap-2 text-xs text-purple-300">
+              <Zap className="w-4 h-4 text-purple-400 shrink-0" />
+              <span>Vòng bo bão điện từ bao trùm toàn bản đồ và co dần sau mỗi 60s. Xe đứng ngoài bo sẽ bị rút máu liên tục. Người sống sót cuối cùng chiến thắng!</span>
+            </div>
+          )}
+
+          {/* Boss Raid Briefing */}
+          {mode === 'BOSS_RAID' && (
+            <div className="mt-2.5 p-2.5 bg-slate-950/80 border border-amber-500/30 rounded-xl flex items-center gap-2 text-xs text-amber-300">
+              <Skull className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Siêu Xe Tăng Boss Leviathan (1000 HP, 4 nòng pháo, sóng EMP) xuất hiện tại Pháo Đài Trung Tâm. Tiêu diệt nhận ngay 4 Rương Huyền Thoại!</span>
+            </div>
+          )}
 
           {/* Live Online Roster & Invite Link (When Public mode is selected) */}
           {mode === 'PUBLIC' && (

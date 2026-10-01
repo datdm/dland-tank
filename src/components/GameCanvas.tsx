@@ -8,6 +8,10 @@ import {
   TANK_CLASSES,
   WeatherType,
   WEATHER_CONFIGS,
+  StormZone,
+  BossInfo,
+  BaseZone,
+  GameMode,
 } from '../types/game';
 import { sounds } from '../utils/audio';
 
@@ -63,6 +67,10 @@ interface GameCanvasProps {
   onPanCamera?: (camX: number, camY: number) => void;
   onFocusWorldPos?: (worldX: number, worldY: number) => void;
   isFreeCameraActive?: boolean;
+  storm?: StormZone | null;
+  boss?: BossInfo | null;
+  bases?: BaseZone[];
+  gameMode?: GameMode;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -84,6 +92,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onPanCamera,
   onFocusWorldPos,
   isFreeCameraActive = false,
+  storm,
+  boss,
+  bases = [],
+  gameMode = 'PUBLIC',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -465,6 +477,71 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // ==========================================
+      // 3.5. TEAM DEATHMATCH BASES (Căn Cứ Hồi Máu Đội Đỏ & Đội Xanh)
+      // ==========================================
+      for (const base of bases) {
+        ctx.save();
+        const isRed = base.team === 'RED';
+        const baseColor = isRed ? '#ef4444' : '#3b82f6';
+        const pulse = 0.5 + Math.sin(now / 350) * 0.5;
+
+        // Base field glow
+        ctx.fillStyle = isRed ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+        ctx.fillRect(base.x, base.y, base.w, base.h);
+
+        // Tech Floor Grid in base
+        ctx.strokeStyle = isRed ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)';
+        ctx.lineWidth = 1;
+        const bStep = 40;
+        for (let bx = base.x; bx <= base.x + base.w; bx += bStep) {
+          ctx.beginPath();
+          ctx.moveTo(bx, base.y);
+          ctx.lineTo(bx, base.y + base.h);
+          ctx.stroke();
+        }
+        for (let by = base.y; by <= base.y + base.h; by += bStep) {
+          ctx.beginPath();
+          ctx.moveTo(base.x, by);
+          ctx.lineTo(base.x + base.w, by);
+          ctx.stroke();
+        }
+
+        // Perimeter Forcefield Border
+        ctx.strokeStyle = baseColor;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([12, 8]);
+        ctx.strokeRect(base.x, base.y, base.w, base.h);
+        ctx.setLineDash([]);
+
+        // Floating Healing Crosses in base
+        ctx.fillStyle = isRed ? 'rgba(252, 165, 165, 0.65)' : 'rgba(147, 197, 253, 0.65)';
+        for (let i = 0; i < 6; i++) {
+          const crossX = base.x + 40 + ((i * 55 + (now / 20)) % (base.w - 80));
+          const crossY = base.y + 60 + ((i * 120 + (now / 15)) % (base.h - 120));
+          const cSize = 6;
+          ctx.fillRect(crossX - cSize / 2, crossY - 1.5, cSize, 3);
+          ctx.fillRect(crossX - 1.5, crossY - cSize / 2, 3, cSize);
+        }
+
+        // Tactical Holographic Center Emblem & Text
+        const cx = base.x + base.w / 2;
+        const cy = base.y + base.h / 2;
+        ctx.fillStyle = baseColor;
+        ctx.shadowColor = baseColor;
+        ctx.shadowBlur = 12;
+        ctx.font = 'black 18px Plus Jakarta Sans, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(isRed ? '🔴 CĂN CỨ ĐỘI ĐỎ' : '🔵 CĂN CỨ ĐỘI XANH', cx, cy - 14);
+
+        ctx.font = 'bold 11px monospace';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowBlur = 4;
+        ctx.fillText('💚 VÙNG HỒI MÁU (+10 HP/s & HỒI GIÁP)', cx, cy + 14);
+        ctx.restore();
+      }
+
+      // ==========================================
       // 4. TANK HEADLIGHT BEAMS (Projected on ground in front of living tanks)
       // ==========================================
       for (const tank of tanks) {
@@ -529,6 +606,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
         ctx.beginPath();
         ctx.ellipse(0, 0, 26, 20, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Boss Leviathan Shadow
+      if (boss && boss.isAlive) {
+        ctx.save();
+        ctx.translate(boss.x + shadowOffsetX * 0.9, boss.y + shadowOffsetY * 0.9);
+        ctx.rotate(boss.angle);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 68, 52, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
@@ -608,8 +697,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // ==========================================
       interface RenderEntity {
         baseY: number;
-        type: 'obstacle' | 'tank' | 'crate';
-        item: Obstacle | PlayerTank | PowerUpCrate;
+        type: 'obstacle' | 'tank' | 'crate' | 'boss';
+        item: Obstacle | PlayerTank | PowerUpCrate | BossInfo;
       }
 
       const entityList: RenderEntity[] = [];
@@ -637,6 +726,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           baseY: crate.y + 10,
           type: 'crate',
           item: crate,
+        });
+      }
+
+      // Add World Boss Leviathan to depth-sorting queue
+      if (boss && boss.isAlive) {
+        entityList.push({
+          baseY: boss.y + 45,
+          type: 'boss',
+          item: boss,
         });
       }
 
@@ -1202,6 +1300,242 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           ctx.restore();
+        } else if (entity.type === 'boss') {
+          // --- 2.5D WORLD BOSS LEVIATHAN (1000 HP, 4-BARREL DREADNOUGHT TANK) ---
+          const b = entity.item as BossInfo;
+          ctx.save();
+          ctx.translate(b.x, b.y);
+
+          // 1. Dual Heavy Treads (Left & Right Track Assemblies)
+          const treadW = 30;
+          const treadL = 140;
+          const treadOffsets = [-56, 56];
+
+          for (const tox of treadOffsets) {
+            // Track base shadow
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(tox - treadW / 2, -treadL / 2, treadW, treadL);
+
+            // Metallic track casing gradient
+            const trackGrad = ctx.createLinearGradient(tox - treadW / 2, 0, tox + treadW / 2, 0);
+            trackGrad.addColorStop(0, '#1e293b');
+            trackGrad.addColorStop(0.5, '#475569');
+            trackGrad.addColorStop(1, '#0f172a');
+            ctx.fillStyle = trackGrad;
+            ctx.fillRect(tox - treadW / 2, -treadL / 2, treadW, treadL);
+
+            // Animated track tread ridges
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 2;
+            const treadScroll = (now / 20) % 16;
+            for (let ty = -treadL / 2 + treadScroll; ty < treadL / 2; ty += 14) {
+              ctx.beginPath();
+              ctx.moveTo(tox - treadW / 2, ty);
+              ctx.lineTo(tox + treadW / 2, ty);
+              ctx.stroke();
+            }
+
+            // Heavy Golden Armor Skirts over tracks
+            ctx.fillStyle = '#b45309';
+            ctx.fillRect(tox - treadW / 2 - 3, -treadL / 2 + 10, 4, treadL - 20);
+            ctx.fillRect(tox + treadW / 2 - 1, -treadL / 2 + 10, 4, treadL - 20);
+          }
+
+          // 2. Heavy Dreadnought Hull
+          const hullW = 86;
+          const hullL = 120;
+          const hullGrad = ctx.createLinearGradient(-hullW / 2, -hullL / 2, hullW / 2, hullL / 2);
+          hullGrad.addColorStop(0, '#334155');
+          hullGrad.addColorStop(0.3, '#1e293b');
+          hullGrad.addColorStop(0.7, '#0f172a');
+          hullGrad.addColorStop(1, '#020617');
+
+          ctx.fillStyle = hullGrad;
+          ctx.beginPath();
+          // Angular armored front bow
+          ctx.moveTo(-hullW / 2, -hullL / 2 + 25);
+          ctx.lineTo(-hullW / 2 + 20, -hullL / 2);
+          ctx.lineTo(hullW / 2 - 20, -hullL / 2);
+          ctx.lineTo(hullW / 2, -hullL / 2 + 25);
+          ctx.lineTo(hullW / 2, hullL / 2);
+          ctx.lineTo(-hullW / 2, hullL / 2);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+
+          // Yellow/Black Hazard Stripes on rear chassis
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(-hullW / 2 + 8, hullL / 2 - 18, hullW - 16, 12);
+          ctx.fillStyle = '#0f172a';
+          for (let hx = -hullW / 2 + 14; hx < hullW / 2 - 14; hx += 16) {
+            ctx.beginPath();
+            ctx.moveTo(hx, hullL / 2 - 18);
+            ctx.lineTo(hx + 8, hullL / 2 - 6);
+            ctx.lineTo(hx + 4, hullL / 2 - 6);
+            ctx.lineTo(hx - 4, hullL / 2 - 18);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Center Leviathan Plasma Core (Pulsing cyan reactor)
+          const corePulse = 0.5 + Math.sin(now / 150) * 0.5;
+          ctx.fillStyle = `rgba(6, 182, 212, ${0.4 + corePulse * 0.6})`;
+          ctx.shadowColor = '#06b6d4';
+          ctx.shadowBlur = 15;
+          ctx.beginPath();
+          ctx.arc(0, 18, 14, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          // 3. Rotating Quad-Cannon Turret (4 Nòng Pháo)
+          ctx.save();
+          ctx.rotate(b.turretAngle);
+
+          // 4 Cannon Barrels:
+          // A) Dual Heavy Main Cannons (Center barrels)
+          const mainBarrelLen = 78;
+          const mainBarrelW = 10;
+          const mainOffsets = [-14, 14];
+
+          for (const mox of mainOffsets) {
+            const bGrad = ctx.createLinearGradient(0, mox - mainBarrelW / 2, 0, mox + mainBarrelW / 2);
+            bGrad.addColorStop(0, '#64748b');
+            bGrad.addColorStop(0.5, '#cbd5e1');
+            bGrad.addColorStop(1, '#1e293b');
+            ctx.fillStyle = bGrad;
+            ctx.fillRect(0, mox - mainBarrelW / 2, mainBarrelLen, mainBarrelW);
+
+            // Heavy double muzzle brake
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(mainBarrelLen - 10, mox - mainBarrelW / 2 - 2, 10, mainBarrelW + 4);
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(mainBarrelLen - 5, mox - mainBarrelW / 2 - 3, 2, mainBarrelW + 6);
+          }
+
+          // B) Dual Secondary Flak / Plasma Barrels (Outer flank barrels)
+          const secBarrelLen = 58;
+          const secBarrelW = 6;
+          const secOffsets = [-32, 32];
+
+          for (const sox of secOffsets) {
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(0, sox - secBarrelW / 2, secBarrelLen, secBarrelW);
+            // Cyan plasma conduit light
+            ctx.fillStyle = '#00f0ff';
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 6;
+            ctx.fillRect(10, sox - 1.5, secBarrelLen - 18, 3);
+            ctx.shadowBlur = 0;
+          }
+
+          // Turret Base Dome
+          const domeRad = 38;
+          const tGrad = ctx.createRadialGradient(-6, -6, 4, 0, 0, domeRad);
+          tGrad.addColorStop(0, '#fef08a');
+          tGrad.addColorStop(0.35, '#d97706');
+          tGrad.addColorStop(0.85, '#451a03');
+          tGrad.addColorStop(1, '#0f172a');
+          ctx.fillStyle = tGrad;
+          ctx.beginPath();
+          ctx.arc(0, 0, domeRad, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+
+          // Golden Skull / Crown Crest on Turret
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 22px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('👑', 0, -2);
+
+          ctx.restore(); // Restore turret
+
+          // 4. Forcefield Shield Aura (When shield > 0)
+          if (b.shield > 0) {
+            ctx.save();
+            const sPulse = 1 + Math.sin(now / 180) * 0.05;
+            const shieldRad = 92 * sPulse;
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([8, 8]);
+            ctx.beginPath();
+            ctx.arc(0, 0, shieldRad, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            const sfGrad = ctx.createRadialGradient(0, 0, 30, 0, 0, shieldRad);
+            sfGrad.addColorStop(0, 'rgba(245, 158, 11, 0.05)');
+            sfGrad.addColorStop(0.8, 'rgba(245, 158, 11, 0.25)');
+            sfGrad.addColorStop(1, 'rgba(251, 191, 36, 0.6)');
+            ctx.fillStyle = sfGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, shieldRad, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // 5. EMP Shockwave Visual Ring (When boss activates EMP)
+          if (b.lastSkillName === 'EMP_SHOCKWAVE') {
+            ctx.save();
+            const waveR = 80 + ((now / 8) % 240);
+            const waveAlpha = Math.max(0, 1 - waveR / 320);
+            ctx.strokeStyle = `rgba(0, 240, 255, ${waveAlpha})`;
+            ctx.lineWidth = 4;
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 16;
+            ctx.beginPath();
+            ctx.arc(0, 0, waveR, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // 6. Overhead Boss Title & Health Bar (Floating at Z = 65)
+          const barW = 140;
+          const barH = 10;
+          const barY = -85;
+
+          // Bar shadow
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillRect(-barW / 2 - 2, barY - 2, barW + 4, barH + 4);
+
+          // HP gauge
+          const hpPct = Math.max(0, Math.min(1, b.hp / b.maxHp));
+          const hpGrad = ctx.createLinearGradient(-barW / 2, 0, barW / 2, 0);
+          hpGrad.addColorStop(0, '#ef4444');
+          hpGrad.addColorStop(0.5, '#f59e0b');
+          hpGrad.addColorStop(1, '#10b981');
+          ctx.fillStyle = hpGrad;
+          ctx.fillRect(-barW / 2, barY, barW * hpPct, barH);
+
+          // Shield bar overlay if active
+          if (b.shield > 0) {
+            const sPct = Math.min(1, b.shield / 250);
+            ctx.fillStyle = '#00f0ff';
+            ctx.fillRect(-barW / 2, barY - 5, barW * sPct, 4);
+          }
+
+          // Boss Title & HP numbers
+          ctx.font = 'black 12px Plus Jakarta Sans, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillStyle = '#fbbf24';
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 4;
+          const bossLabel = `👑 SIÊU BOSS LEVIATHAN [1000 HP]`;
+          ctx.strokeText(bossLabel, 0, barY - 8);
+          ctx.fillText(bossLabel, 0, barY - 8);
+
+          ctx.font = 'bold 9px monospace';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(`${Math.ceil(b.hp)} / ${b.maxHp} HP${b.shield > 0 ? ` (+${Math.ceil(b.shield)} Giáp)` : ''}`, 0, barY + barH + 12);
+
+          ctx.restore();
         }
       }
 
@@ -1319,6 +1653,71 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.beginPath();
         ctx.arc(p.x, p.y - p.z, p.radius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+      }
+
+      // ==========================================
+      // 9.5. BATTLE ROYALE STORM ZONE (Vòng Bo Điện Từ)
+      // ==========================================
+      if (storm && (storm.active || gameMode === 'BATTLE_ROYALE')) {
+        ctx.save();
+        const scx = storm.centerX;
+        const scy = storm.centerY;
+        const sRadius = Math.max(10, storm.currentRadius);
+
+        // 1. Shaded Storm Electromagnetic Haze Outside Safe Circle
+        ctx.fillStyle = 'rgba(126, 34, 206, 0.22)';
+        ctx.beginPath();
+        ctx.rect(0, 0, worldSize.width, worldSize.height);
+        ctx.arc(scx, scy, sRadius, 0, Math.PI * 2, true);
+        ctx.fill();
+
+        // 2. Safe Zone Neon Electric Perimeter Ring
+        const ringPulse = 0.5 + Math.sin(now / 120) * 0.5;
+        ctx.strokeStyle = storm.isShrinking ? '#f59e0b' : '#c084fc';
+        ctx.lineWidth = 3.5;
+        ctx.shadowColor = storm.isShrinking ? '#f59e0b' : '#a855f7';
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.arc(scx, scy, sRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Secondary cyan plasma ring
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(scx, scy, sRadius + (Math.sin(now / 180) * 4), 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Lightning arcs along perimeter
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        const arcCount = 12;
+        for (let i = 0; i < arcCount; i++) {
+          const baseAngle = (i / arcCount) * Math.PI * 2 + (now / 2000);
+          const ax1 = scx + Math.cos(baseAngle) * sRadius;
+          const ay1 = scy + Math.sin(baseAngle) * sRadius;
+          const ax2 = scx + Math.cos(baseAngle + 0.1) * (sRadius + (Math.random() - 0.5) * 16);
+          const ay2 = scy + Math.sin(baseAngle + 0.1) * (sRadius + (Math.random() - 0.5) * 16);
+          ctx.beginPath();
+          ctx.moveTo(ax1, ay1);
+          ctx.lineTo(ax2, ay2);
+          ctx.stroke();
+        }
+
+        // Tactical Perimeter Text along top edge of safe zone
+        ctx.font = 'black 14px Plus Jakarta Sans, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = storm.isShrinking ? '#fef08a' : '#e9d5ff';
+        ctx.strokeStyle = '#020617';
+        ctx.lineWidth = 3.5;
+        const stormTag = storm.isShrinking
+          ? `⚠️ [VÒNG BO ĐANG THU HẸP] BÁN KÍNH: ${Math.round(sRadius)}m`
+          : `⚡ [VÙNG AN TOÀN] BÁN KÍNH: ${Math.round(sRadius)}m`;
+        ctx.strokeText(stormTag, scx, scy - sRadius - 12);
+        ctx.fillText(stormTag, scx, scy - sRadius - 12);
+
         ctx.restore();
       }
 
@@ -1462,6 +1861,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillRect(0, 0, width, height);
         lightningFlashRef.current = Math.max(0, lightningFlashRef.current - 0.08);
       }
+
+      // Outside Storm Zone Screen Vignette Warning
+      const myActiveTank = tanks.find((t) => t.id === myPlayerId);
+      if (myActiveTank && myActiveTank.inStorm && !myActiveTank.isDead) {
+        const pulse = 0.5 + Math.sin(now / 150) * 0.5;
+        const vignetteGrad = ctx.createRadialGradient(
+          width / 2,
+          height / 2,
+          Math.min(width, height) * 0.35,
+          width / 2,
+          height / 2,
+          Math.max(width, height) * 0.75
+        );
+        vignetteGrad.addColorStop(0, 'transparent');
+        vignetteGrad.addColorStop(0.7, `rgba(168, 85, 247, ${0.25 + pulse * 0.35})`);
+        vignetteGrad.addColorStop(1, `rgba(225, 29, 72, ${0.4 + pulse * 0.4})`);
+
+        ctx.fillStyle = vignetteGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // Warning text top center
+        ctx.font = 'black 16px Plus Jakarta Sans, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = '#f43f5e';
+        ctx.strokeStyle = '#020617';
+        ctx.lineWidth = 4;
+        ctx.strokeText(`⚠️ BẠN ĐANG Ở NGOÀI BO! BỊ RÚT MÁU LIÊN TỤC!`, width / 2, 70);
+        ctx.fillText(`⚠️ BẠN ĐANG Ở NGOÀI BO! BỊ RÚT MÁU LIÊN TỤC!`, width / 2, 70);
+      }
+
       ctx.restore();
 
       ctx.restore(); // Restore canvas scaling
@@ -1486,6 +1916,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     currentWeather,
     focusBeacon,
     isFreeCameraActive,
+    storm,
+    boss,
+    bases,
+    gameMode,
   ]);
 
   // Drag-to-pan camera state

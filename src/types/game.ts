@@ -221,6 +221,56 @@ export interface PlayerTank {
   perks: PerkId[];
   pendingPerkChoices?: PerkCard[];
   lastDamagedTime?: number;
+  team?: Team;
+  inStorm?: boolean;
+  inHealingBase?: boolean;
+}
+
+export type Team = 'RED' | 'BLUE' | 'NONE';
+
+export interface StormZone {
+  centerX: number;
+  centerY: number;
+  currentRadius: number;
+  targetRadius: number;
+  phase: number;
+  maxPhases: number;
+  phaseTimeLeft: number;
+  isShrinking: boolean;
+  active: boolean;
+  dps: number;
+}
+
+export interface TeamScore {
+  red: number;
+  blue: number;
+  targetKills: number;
+  winner: Team | null;
+}
+
+export interface BaseZone {
+  team: Team;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface BossInfo {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  angle: number;
+  turretAngle: number;
+  hp: number;
+  maxHp: number;
+  shield: number;
+  isAlive: boolean;
+  phase: number;
+  nextSkillTime: number;
+  respawnTimeLeft?: number;
+  lastSkillName?: string;
 }
 
 export interface Bullet {
@@ -300,9 +350,17 @@ export interface GameSnapshot {
   leaderboard: LeaderboardEntry[];
   serverTime: number;
   landmines?: Landmine[];
+  mode?: GameMode;
+  storm?: StormZone;
+  teamScore?: TeamScore;
+  boss?: BossInfo | null;
+  aliveCount?: number;
+  totalParticipants?: number;
+  brWinner?: { id: string; name: string; color: string; kills: number } | null;
+  bases?: BaseZone[];
 }
 
-export type GameMode = 'AI' | 'PUBLIC';
+export type GameMode = 'PUBLIC' | 'BATTLE_ROYALE' | 'TEAM_DEATHMATCH' | 'BOSS_RAID' | 'AI';
 
 export interface PublicPlayerInfo {
   id: string;
@@ -323,6 +381,7 @@ export type ClientMessage =
       roomId?: string;
       botCount?: number;
       isSpectator?: boolean;
+      team?: Team;
     }
   | {
       type: 'INPUT';

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PlayerTank, Obstacle, PowerUpCrate } from '../types/game';
+import { PlayerTank, Obstacle, PowerUpCrate, StormZone, BossInfo, BaseZone } from '../types/game';
 import { X, Maximize2, Minimize2, MapPin, Target } from 'lucide-react';
 
 interface RadarMinimapProps {
@@ -13,6 +13,9 @@ interface RadarMinimapProps {
   onFocusWorldPos?: (x: number, y: number) => void;
   cameraPos?: { x: number; y: number };
   focusBeacon?: { x: number; y: number; timestamp: number } | null;
+  storm?: StormZone | null;
+  boss?: BossInfo | null;
+  bases?: BaseZone[];
 }
 
 export const RadarMinimap: React.FC<RadarMinimapProps> = ({
@@ -26,6 +29,9 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
   onFocusWorldPos,
   cameraPos,
   focusBeacon,
+  storm,
+  boss,
+  bases = [],
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isLarge = mode === 'large';
@@ -82,6 +88,25 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
         ctx.fillText('KHU THỬ NGHIỆM (ĐÔNG NAM)', size * 0.75, size * 0.88);
       }
 
+      // Team Bases in Minimap
+      for (const base of bases) {
+        const bx = base.x * scaleX;
+        const by = base.y * scaleY;
+        const bw = base.w * scaleX;
+        const bh = base.h * scaleY;
+        ctx.fillStyle = base.team === 'RED' ? 'rgba(239, 68, 68, 0.28)' : 'rgba(59, 130, 246, 0.28)';
+        ctx.fillRect(bx, by, bw, bh);
+        ctx.strokeStyle = base.team === 'RED' ? '#ef4444' : '#3b82f6';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(bx, by, bw, bh);
+        if (isLarge) {
+          ctx.fillStyle = base.team === 'RED' ? '#fca5a5' : '#93c5fd';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(base.team === 'RED' ? '🔴 CĂN CỨ ĐỎ' : '🔵 CĂN CỨ XANH', bx + bw / 2, by + bh / 2 + 3);
+        }
+      }
+
       // Water zones
       ctx.fillStyle = 'rgba(14, 116, 144, 0.8)';
       for (const obs of obstacles) {
@@ -111,6 +136,36 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
         const cy = crate.y * scaleY;
         ctx.fillStyle = '#f59e0b';
         ctx.fillRect(cx - 2, cy - 2, 4, 4);
+      }
+
+      // Storm Zone (Battle Royale) in Minimap
+      if (storm && storm.active) {
+        const stormX = storm.centerX * scaleX;
+        const stormY = storm.centerY * scaleY;
+        const stormR = Math.max(2, storm.currentRadius * scaleX);
+
+        ctx.save();
+        // Safe Zone Perimeter Ring
+        ctx.strokeStyle = '#c084fc';
+        ctx.lineWidth = isLarge ? 2 : 1.5;
+        ctx.beginPath();
+        ctx.arc(stormX, stormY, stormR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Shaded storm zone outside safe circle
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.22)';
+        ctx.beginPath();
+        ctx.rect(0, 0, size, size);
+        ctx.arc(stormX, stormY, stormR, 0, Math.PI * 2, true);
+        ctx.fill();
+
+        if (isLarge) {
+          ctx.fillStyle = '#e9d5ff';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`⚡ BO: ${Math.round(storm.currentRadius)}m`, stormX, Math.max(12, stormY - stormR - 3));
+        }
+        ctx.restore();
       }
 
       // Rotating radar beam effect
@@ -219,6 +274,40 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
         }
       }
 
+      // World Boss Leviathan in Minimap
+      if (boss && boss.isAlive) {
+        const bx = boss.x * scaleX;
+        const by = boss.y * scaleY;
+        const pulse = (Math.sin(now / 180) + 1) * 2;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.35)';
+        ctx.beginPath();
+        ctx.arc(bx, by, 9 + pulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(bx, by, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('👑', bx, by);
+
+        if (isLarge) {
+          ctx.fillStyle = '#fbbf24';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText(`BOSS (${Math.ceil(boss.hp)} HP)`, bx, by - 12);
+        }
+        ctx.restore();
+      }
+
       // Outer border and concentric circles
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
       ctx.lineWidth = 1.5;
@@ -234,7 +323,7 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [tanks, obstacles, powerUps, worldSize, myPlayerId, isLarge, size, cameraPos, focusBeacon]);
+  }, [tanks, obstacles, powerUps, worldSize, myPlayerId, isLarge, size, cameraPos, focusBeacon, storm, boss, bases]);
 
   // Handle map interaction (Click or Drag on Minimap to focus camera)
   const processMinimapFocus = (clientX: number, clientY: number) => {
