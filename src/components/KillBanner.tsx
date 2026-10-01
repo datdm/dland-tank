@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { CombatEvent } from '../types/game';
-import { Trophy, Flame, Crosshair, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { CombatEvent, COMBAT_MEDALS, CombatMedalType } from '../types/game';
+import { Trophy, Flame, Crosshair, ShieldAlert, AlertTriangle, Sparkles, Award } from 'lucide-react';
 import { sounds } from '../utils/audio';
 
 interface KillBannerProps {
@@ -18,6 +18,7 @@ interface BannerData {
   streakText?: string;
   streakCount?: number;
   scoreBonus: number;
+  medal?: CombatMedalType;
 }
 
 export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerName, myPlayerId }) => {
@@ -39,16 +40,29 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
       (!!victim && victim.trim().toLowerCase() === cleanMyName);
 
     let streakText = '';
-    let streakCount = 1;
+    let streakCount = recentEvent.streak || 1;
     let scoreBonus = 100;
 
-    // Detect streak in text
-    if (recentEvent.text.includes('KILLS') || recentEvent.text.includes('NỔI GIẬN')) {
+    // Detect streak in text if not set
+    if (!recentEvent.streak && (recentEvent.text.includes('KILLS') || recentEvent.text.includes('NỔI GIẬN'))) {
       const match = recentEvent.text.match(/\((\d+)\s*KILLS\)/i);
       streakCount = match ? parseInt(match[1], 10) : 3;
     }
 
-    if (streakCount >= 5) {
+    const medal = recentEvent.medal;
+    const medalInfo = medal ? COMBAT_MEDALS[medal] : null;
+
+    if (medalInfo) {
+      streakText = `${medalInfo.vietnameseTitle} · ${medalInfo.title}`;
+      if (medal === 'GODLIKE') scoreBonus = 300;
+      else if (medal === 'UNSTOPPABLE') scoreBonus = 250;
+      else if (medal === 'RAMPAGE') scoreBonus = 200;
+      else if (medal === 'TRIPLE_KILL') scoreBonus = 180;
+      else if (medal === 'DOUBLE_KILL') scoreBonus = 150;
+      else if (medal === 'SNIPER') scoreBonus = 160;
+      else if (medal === 'REVENGE') scoreBonus = 175;
+      else if (medal === 'FIRST_BLOOD') scoreBonus = 150;
+    } else if (streakCount >= 5) {
       streakText = 'UNSTOPPABLE · CHIẾN THẦN HUYỀN THOẠI 👑';
       scoreBonus = 200;
     } else if (streakCount === 4) {
@@ -66,7 +80,15 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
     }
 
     if (isMyKill) {
-      sounds.playKill(streakCount);
+      if (medal) {
+        sounds.playMedalFanfare(medal);
+        if (medalInfo) {
+          sounds.announce(medalInfo.voiceText, medalInfo.viVoiceText);
+        }
+      } else {
+        sounds.playKill(streakCount);
+      }
+
       setActiveBanner({
         id: recentEvent.id,
         bannerType: 'MY_KILL',
@@ -76,6 +98,7 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
         streakText,
         streakCount,
         scoreBonus,
+        medal,
       });
     } else if (isMyDeath) {
       sounds.playExplosion();
@@ -88,9 +111,14 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
         streakText,
         streakCount,
         scoreBonus,
+        medal,
       });
-    } else if (streakCount >= 3) {
-      // Global battlefield notice if someone else is on a killing spree
+    } else if (streakCount >= 3 || medal === 'FIRST_BLOOD' || medal === 'GODLIKE' || medal === 'UNSTOPPABLE') {
+      // Global broadcast notice with tactical announcer voice for significant battlefield events
+      if (medalInfo && (medal === 'FIRST_BLOOD' || medal === 'GODLIKE')) {
+        sounds.announce(medalInfo.voiceText, medalInfo.viVoiceText);
+      }
+
       setActiveBanner({
         id: recentEvent.id,
         bannerType: 'GLOBAL_STREAK',
@@ -100,6 +128,7 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
         streakText,
         streakCount,
         scoreBonus,
+        medal,
       });
     } else {
       return;
@@ -107,55 +136,82 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
 
     const timer = setTimeout(() => {
       setActiveBanner(null);
-    }, 3200);
+    }, 3800);
 
     return () => clearTimeout(timer);
   }, [recentEvent, myPlayerName, myPlayerId]);
 
   if (!activeBanner) return null;
 
+  const currentMedal = activeBanner.medal ? COMBAT_MEDALS[activeBanner.medal] : null;
+
   return (
-    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none select-none flex flex-col items-center animate-in fade-in zoom-in-90 slide-in-from-top-4 duration-200">
+    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none select-none flex flex-col items-center animate-in fade-in zoom-in-95 slide-in-from-top-4 duration-300">
       {activeBanner.bannerType === 'MY_KILL' ? (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-amber-950/95 via-slate-900/95 to-amber-950/95 border-2 border-amber-400/90 shadow-[0_0_40px_rgba(251,191,36,0.45)] px-6 py-3 min-w-[320px] max-w-md text-center backdrop-blur-md">
+        <div
+          className={`relative overflow-hidden rounded-3xl border-2 px-6 py-4 min-w-[340px] max-w-lg text-center backdrop-blur-md shadow-2xl ${
+            currentMedal
+              ? `bg-gradient-to-r ${currentMedal.bgGradient} shadow-[0_0_50px_rgba(234,179,8,0.5)]`
+              : 'bg-gradient-to-r from-amber-950/95 via-slate-900/95 to-amber-950/95 border-amber-400/90 shadow-[0_0_40px_rgba(251,191,36,0.45)]'
+          }`}
+        >
           {/* Top highlight bar */}
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-400 via-yellow-200 to-amber-400 animate-pulse" />
 
-          {/* Streak Callout */}
-          <div className="flex items-center justify-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-300">
-            {activeBanner.streakCount && activeBanner.streakCount >= 3 ? (
-              <Flame className="w-4 h-4 text-orange-400 animate-bounce" />
-            ) : (
-              <Crosshair className="w-4 h-4 text-amber-400" />
-            )}
-            <span>{activeBanner.streakText}</span>
-          </div>
+          {/* If Combat Medal Awarded: Grand Medal Emblem Badge */}
+          {currentMedal ? (
+            <div className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-3xl animate-bounce drop-shadow-[0_0_12px_rgba(255,255,255,0.8)]">
+                  {currentMedal.icon}
+                </span>
+                <span className="text-sm font-black font-mono tracking-wider text-yellow-300 uppercase drop-shadow-md">
+                  {currentMedal.vietnameseTitle}
+                </span>
+                <span className="text-[10px] font-mono font-bold bg-yellow-400/20 text-yellow-200 border border-yellow-400/40 px-2 py-0.5 rounded-full">
+                  {currentMedal.title}
+                </span>
+              </div>
+              <p className="text-[11px] text-yellow-100/90 font-medium">{currentMedal.subtitle}</p>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-1.5 text-xs font-black uppercase tracking-wider text-amber-300">
+              {activeBanner.streakCount && activeBanner.streakCount >= 3 ? (
+                <Flame className="w-4 h-4 text-orange-400 animate-bounce" />
+              ) : (
+                <Crosshair className="w-4 h-4 text-amber-400" />
+              )}
+              <span>{activeBanner.streakText}</span>
+            </div>
+          )}
 
-          {/* Defeat statement */}
-          <div className="mt-1 flex items-center justify-center gap-2">
+          {/* Defeat Statement */}
+          <div className="mt-2 flex items-center justify-center gap-2">
             <span className="text-white text-base sm:text-lg font-black tracking-tight">
-              ĐÃ HẠ GỤC ĐỐI THỦ
+              ĐÃ BẮN HẠ
             </span>
-            <span className="text-rose-400 text-base sm:text-lg font-black tracking-tight underline decoration-rose-500/50 decoration-2">
+            <span className="text-rose-300 text-base sm:text-lg font-black tracking-tight underline decoration-rose-400/60 decoration-2">
               {activeBanner.victimName}
             </span>
           </div>
 
-          {/* Reward Points */}
-          <div className="mt-1.5 flex items-center justify-center gap-2 text-xs font-mono">
-            <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full font-bold">
-              +{activeBanner.scoreBonus} ĐIỂM CHIẾN ĐẤU
+          {/* Reward Badges */}
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-mono">
+            <span className="bg-emerald-500/25 text-emerald-300 border border-emerald-500/50 px-3 py-0.5 rounded-full font-bold flex items-center gap-1">
+              <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+              <span>+{activeBanner.scoreBonus} ĐIỂM CHIẾN ĐẤU</span>
             </span>
+
             {activeBanner.streakCount && activeBanner.streakCount >= 2 && (
-              <span className="bg-amber-500/25 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
-                <Flame className="w-3 h-3 text-orange-400" />
-                CHUỖI {activeBanner.streakCount}
+              <span className="bg-amber-500/25 text-amber-300 border border-amber-500/50 px-3 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <Flame className="w-3.5 h-3.5 text-orange-400" />
+                <span>CHUỖI {activeBanner.streakCount} MẠNG</span>
               </span>
             )}
           </div>
         </div>
       ) : activeBanner.bannerType === 'MY_DEATH' ? (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-rose-950/95 via-slate-900/95 to-rose-950/95 border-2 border-rose-500/90 shadow-[0_0_40px_rgba(244,63,94,0.45)] px-6 py-3 min-w-[320px] max-w-md text-center backdrop-blur-md">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-rose-950/95 via-slate-900/95 to-rose-950/95 border-2 border-rose-500/90 shadow-[0_0_40px_rgba(244,63,94,0.45)] px-6 py-3.5 min-w-[320px] max-w-md text-center backdrop-blur-md">
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-rose-500 via-red-300 to-rose-500 animate-pulse" />
 
           <div className="flex items-center justify-center gap-1.5 text-xs font-black uppercase tracking-wider text-rose-300">
@@ -168,25 +224,32 @@ export const KillBanner: React.FC<KillBannerProps> = ({ recentEvent, myPlayerNam
           </div>
 
           <div className="mt-1 text-[11px] text-slate-400 font-mono">
-            Nhấn Nút Hồi Sinh để tái xuất trận địa!
+            Hồi sinh để báo thù rửa hận đối thủ!
           </div>
         </div>
       ) : activeBanner.bannerType === 'GLOBAL_STREAK' ? (
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-purple-950/95 via-slate-900/95 to-purple-950/95 border-2 border-purple-500/80 shadow-[0_0_35px_rgba(168,85,247,0.35)] px-5 py-2.5 min-w-[300px] max-w-md text-center backdrop-blur-md">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-purple-950/95 via-slate-900/95 to-purple-950/95 border-2 border-purple-500/80 shadow-[0_0_35px_rgba(168,85,247,0.35)] px-5 py-3 min-w-[320px] max-w-md text-center backdrop-blur-md">
           <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-400 via-pink-300 to-purple-400 animate-pulse" />
 
           <div className="flex items-center justify-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-purple-300">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-            <span>CẢNH BÁO CHIẾN TRƯỜNG</span>
+            <span>HUÂN CHƯƠNG CHIẾN TRƯỜNG</span>
           </div>
 
-          <div className="mt-0.5 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5">
+          <div className="mt-1 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 flex-wrap">
             <span className="text-purple-300 font-black">{activeBanner.killerName}</span>
-            <span className="text-slate-400">hạ</span>
+            <span className="text-slate-400">hạ gục</span>
             <span className="text-rose-300 font-semibold">{activeBanner.victimName}</span>
-            <span className="bg-purple-500/30 text-purple-200 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
-              {activeBanner.streakCount} KILLS 🔥
-            </span>
+            {currentMedal ? (
+              <span className="bg-yellow-500/30 text-yellow-300 text-xs px-2 py-0.5 rounded-full font-mono font-bold flex items-center gap-1 border border-yellow-500/50">
+                <span>{currentMedal.icon}</span>
+                <span>{currentMedal.title}</span>
+              </span>
+            ) : (
+              <span className="bg-purple-500/30 text-purple-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold">
+                {activeBanner.streakCount} KILLS 🔥
+              </span>
+            )}
           </div>
         </div>
       ) : null}

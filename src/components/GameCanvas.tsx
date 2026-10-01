@@ -1079,9 +1079,88 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
           ctx.fillRect(-20, -13, 40, 26);
 
-          // Sloped Upper Hull Plate
-          ctx.fillStyle = tank.color;
-          ctx.fillRect(-19, -12, 38, 24);
+          // Sloped Upper Hull Plate with Custom Skin Workshop Pattern
+          const skin = tank.skinId || 'DEFAULT';
+          if (skin === 'CAMO_WOODLAND') {
+            ctx.fillStyle = '#2d4a22';
+            ctx.fillRect(-19, -12, 38, 24);
+            // Camo splotches
+            ctx.fillStyle = '#4d7c0f';
+            ctx.beginPath();
+            ctx.ellipse(-8, -4, 9, 6, 0.4, 0, Math.PI * 2);
+            ctx.ellipse(9, 3, 7, 5, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#713f12';
+            ctx.beginPath();
+            ctx.ellipse(3, -5, 6, 4, -0.5, 0, Math.PI * 2);
+            ctx.ellipse(-12, 5, 5, 4, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath();
+            ctx.ellipse(-3, 6, 7, 3, 0.1, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (skin === 'ARCTIC_FROST') {
+            const frostGrad = ctx.createLinearGradient(-19, -12, 19, 12);
+            frostGrad.addColorStop(0, '#0284c7');
+            frostGrad.addColorStop(0.5, '#38bdf8');
+            frostGrad.addColorStop(1, '#e0f2fe');
+            ctx.fillStyle = frostGrad;
+            ctx.fillRect(-19, -12, 38, 24);
+            // Crystal facets & shimmer
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-10, -12); ctx.lineTo(-2, 0); ctx.lineTo(8, -12);
+            ctx.moveTo(-2, 0); ctx.lineTo(6, 12);
+            ctx.stroke();
+          } else if (skin === 'VOLCANIC_MAGMA') {
+            ctx.fillStyle = '#1c1917';
+            ctx.fillRect(-19, -12, 38, 24);
+            // Magma glowing fissures
+            const lavaPulse = 0.6 + Math.sin(now / 180) * 0.4;
+            ctx.strokeStyle = `rgba(239, 68, 68, ${lavaPulse})`;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.moveTo(-18, -6); ctx.lineTo(-6, -2); ctx.lineTo(4, -8); ctx.lineTo(16, -3);
+            ctx.moveTo(-10, 6); ctx.lineTo(2, 4); ctx.lineTo(14, 8);
+            ctx.stroke();
+            ctx.strokeStyle = '#fef08a';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          } else if (skin === 'NEON_CYBERPUNK') {
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(-19, -12, 38, 24);
+            // Cyberpunk neon edges & grid
+            ctx.strokeStyle = '#d946ef';
+            ctx.lineWidth = 1.5;
+            ctx.shadowColor = '#d946ef';
+            ctx.shadowBlur = 8;
+            ctx.strokeRect(-18, -11, 36, 22);
+            ctx.strokeStyle = '#06b6d4';
+            ctx.beginPath();
+            ctx.moveTo(-18, 0); ctx.lineTo(18, 0);
+            ctx.moveTo(0, -11); ctx.lineTo(0, 11);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          } else if (skin === 'ROYAL_GOLD') {
+            const goldGrad = ctx.createLinearGradient(-19, -12, 19, 12);
+            goldGrad.addColorStop(0, '#fef08a');
+            goldGrad.addColorStop(0.3, '#eab308');
+            goldGrad.addColorStop(0.7, '#ca8a04');
+            goldGrad.addColorStop(1, '#a16207');
+            ctx.fillStyle = goldGrad;
+            ctx.fillRect(-19, -12, 38, 24);
+            // Royal filigree borders
+            ctx.strokeStyle = '#fef08a';
+            ctx.lineWidth = 1.2;
+            ctx.strokeRect(-16, -9, 32, 18);
+          } else {
+            ctx.fillStyle = tank.color;
+            ctx.fillRect(-19, -12, 38, 24);
+          }
 
           // 3D Bevel highlight on front glacis armor plate
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
@@ -1187,7 +1266,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const domeRad = tank.tankClass === 'JUGGERNAUT' ? 14 : tank.tankClass === 'SCOUT' ? 10 : 12;
           const turretGrad = ctx.createRadialGradient(-3, -3, 2, 0, 0, domeRad);
           turretGrad.addColorStop(0, '#ffffff');
-          turretGrad.addColorStop(0.3, tank.color);
+
+          let turretColor = tank.color;
+          if (skin === 'CAMO_WOODLAND') turretColor = '#2d4a22';
+          else if (skin === 'ARCTIC_FROST') turretColor = '#0ea5e9';
+          else if (skin === 'VOLCANIC_MAGMA') turretColor = '#dc2626';
+          else if (skin === 'NEON_CYBERPUNK') turretColor = '#d946ef';
+          else if (skin === 'ROYAL_GOLD') turretColor = '#eab308';
+
+          turretGrad.addColorStop(0.3, turretColor);
           turretGrad.addColorStop(1, '#0f172a');
 
           ctx.fillStyle = turretGrad;
@@ -1210,6 +1297,72 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.beginPath();
           ctx.arc(-7, -4, 2, 0, Math.PI * 2);
           ctx.fill();
+
+          // Roof Decal / Flag Emblem mounted on top of turret
+          const decal = tank.roofDecal || 'NONE';
+          if (decal === 'FLAG_VIETNAM') {
+            // Cờ Đỏ Sao Vàng Việt Nam tung bay trên nóc tháp pháo
+            ctx.save();
+            ctx.fillStyle = '#da251d';
+            ctx.fillRect(-6, -4, 12, 8);
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 0.6;
+            ctx.strokeRect(-6, -4, 12, 8);
+            // Gold Star
+            ctx.fillStyle = '#ffd700';
+            ctx.font = 'bold 7px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('★', 0, 0.5);
+            ctx.restore();
+          } else if (decal === 'PIRATE_SKULL') {
+            // Cờ Hải Tặc Jolly Roger
+            ctx.save();
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(-5, -4, 10, 8);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 7px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('☠', 0, 0.5);
+            ctx.restore();
+          } else if (decal === 'TIGER_BEAST') {
+            // Icon Mãnh Hổ
+            ctx.save();
+            ctx.font = '8px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🐯', 0, 0);
+            ctx.restore();
+          } else if (decal === 'MILITARY_STAR') {
+            // Ngôi sao quân sự vàng
+            ctx.save();
+            ctx.fillStyle = '#facc15';
+            ctx.shadowColor = '#facc15';
+            ctx.shadowBlur = 4;
+            ctx.font = 'bold 9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('★', 0, 0.5);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+          } else if (decal === 'DRAGON_CREST') {
+            // Biểu tượng Rồng
+            ctx.save();
+            ctx.font = '8px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🐉', 0, 0);
+            ctx.restore();
+          } else if (decal === 'ROYAL_SHIELD') {
+            // Khiên Hiệp Sĩ Hoàng Gia
+            ctx.save();
+            ctx.font = '8px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🛡️', 0, 0);
+            ctx.restore();
+          }
 
           ctx.restore(); // Finish Turret
 
@@ -1549,7 +1702,96 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.ellipse(b.x + shadowOffsetX * 0.6, b.y + shadowOffsetY * 0.6, 4, 3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // 2. Elevated 3D Shell Body with specialized visual per bullet modifier
+        // 2. Custom Bullet Trail & Muzzle Effects
+        const trail = b.trailEffect || 'STANDARD';
+        const speed = Math.hypot(b.vx, b.vy) || 10;
+        const normVx = b.vx / speed;
+        const normVy = b.vy / speed;
+
+        if (trail === 'PURPLE_LIGHTNING') {
+          // Vệt tia chớp tím phóng điện lách tách
+          ctx.save();
+          ctx.strokeStyle = '#c084fc';
+          ctx.lineWidth = 2.5;
+          ctx.shadowColor = '#9333ea';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.moveTo(b.x, b.y - 18);
+          for (let step = 1; step <= 5; step++) {
+            const tx = b.x - normVx * (step * 7) + (Math.sin(now / 40 + step * 2) * 5);
+            const ty = b.y - 18 - normVy * (step * 7) + (Math.cos(now / 40 + step * 2) * 5);
+            ctx.lineTo(tx, ty);
+          }
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        } else if (trail === 'DRAGON_FIRE') {
+          // Vệt lửa rồng cuộn tàn than hồng
+          ctx.save();
+          for (let step = 1; step <= 4; step++) {
+            const pDist = step * 8;
+            const px = b.x - normVx * pDist + (Math.sin(step * 3) * 3);
+            const py = b.y - 18 - normVy * pDist + (Math.cos(step * 3) * 3);
+            const pRad = Math.max(1.5, 5.5 - step * 1.1);
+            ctx.fillStyle = step % 2 === 0 ? '#f97316' : '#ef4444';
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(px, py, pRad, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        } else if (trail === 'FROST_SNOW') {
+          // Hạt tuyết rơi băng tuyết bắc cực
+          ctx.save();
+          for (let step = 1; step <= 3; step++) {
+            const pDist = step * 9;
+            const px = b.x - normVx * pDist;
+            const py = b.y - 18 - normVy * pDist;
+            ctx.fillStyle = '#e0f2fe';
+            ctx.shadowColor = '#38bdf8';
+            ctx.shadowBlur = 6;
+            ctx.font = 'bold 9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('❄', px, py);
+          }
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        } else if (trail === 'CYAN_LASER') {
+          // Tia laze neon plasma công nghệ cao
+          ctx.save();
+          const laserGrad = ctx.createLinearGradient(b.x, b.y - 18, b.x - normVx * 35, b.y - 18 - normVy * 35);
+          laserGrad.addColorStop(0, '#00f0ff');
+          laserGrad.addColorStop(0.6, 'rgba(0, 240, 255, 0.4)');
+          laserGrad.addColorStop(1, 'transparent');
+          ctx.strokeStyle = laserGrad;
+          ctx.lineWidth = 3;
+          ctx.shadowColor = '#00f0ff';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.moveTo(b.x, b.y - 18);
+          ctx.lineTo(b.x - normVx * 35, b.y - 18 - normVy * 35);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        } else {
+          // Vệt đạn tiêu chuẩn
+          ctx.save();
+          const trailGrad = ctx.createLinearGradient(b.x, b.y - 18, b.x - normVx * 22, b.y - 18 - normVy * 22);
+          trailGrad.addColorStop(0, b.color || '#fbbf24');
+          trailGrad.addColorStop(1, 'transparent');
+          ctx.strokeStyle = trailGrad;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(b.x, b.y - 18);
+          ctx.lineTo(b.x - normVx * 22, b.y - 18 - normVy * 22);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 3. Elevated 3D Shell Body with specialized visual per bullet modifier
         ctx.save();
         ctx.translate(b.x, b.y - 18); // Elevated in air!
 

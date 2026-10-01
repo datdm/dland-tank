@@ -23,6 +23,10 @@ import {
   TeamScore,
   BossInfo,
   BaseZone,
+  TankSkinId,
+  BulletTrailId,
+  RoofDecalId,
+  CombatMedalType,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
@@ -117,6 +121,8 @@ export class GameEngine {
   private bossNextSkillTime: number = 0;
   private bossMoveAngle: number = 0;
   private bossNextMoveChange: number = 0;
+
+  private firstBloodOccurred: boolean = false;
 
   private generateEventId(): string {
     return `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${this.nextEventId++}`;
@@ -388,7 +394,10 @@ export class GameEngine {
     color: string,
     tankClass: TankClass,
     isBot: boolean = false,
-    team?: Team
+    team?: Team,
+    skinId?: TankSkinId,
+    bulletTrail?: BulletTrailId,
+    roofDecal?: RoofDecalId
   ): PlayerTank {
     const stats = TANK_CLASSES[tankClass] || TANK_CLASSES.STRIKER;
     let spawn = this.findSafeSpawnPosition();
@@ -415,6 +424,14 @@ export class GameEngine {
         spawn = { x: 3800 + Math.random() * 150, y: 1800 + Math.random() * 600 };
       }
     }
+
+    const botSkins: TankSkinId[] = ['CAMO_WOODLAND', 'ARCTIC_FROST', 'VOLCANIC_MAGMA', 'NEON_CYBERPUNK', 'ROYAL_GOLD'];
+    const botTrails: BulletTrailId[] = ['PURPLE_LIGHTNING', 'DRAGON_FIRE', 'FROST_SNOW', 'CYAN_LASER'];
+    const botDecals: RoofDecalId[] = ['FLAG_VIETNAM', 'PIRATE_SKULL', 'TIGER_BEAST', 'MILITARY_STAR', 'DRAGON_CREST', 'ROYAL_SHIELD'];
+
+    const chosenSkin: TankSkinId = skinId || (isBot ? botSkins[Math.floor(Math.random() * botSkins.length)] : 'DEFAULT');
+    const chosenTrail: BulletTrailId = bulletTrail || (isBot && Math.random() > 0.4 ? botTrails[Math.floor(Math.random() * botTrails.length)] : 'STANDARD');
+    const chosenDecal: RoofDecalId = roofDecal || (isBot && Math.random() > 0.4 ? botDecals[Math.floor(Math.random() * botDecals.length)] : 'NONE');
 
     const tank: PlayerTank = {
       id,
@@ -460,9 +477,13 @@ export class GameEngine {
       team: assignedTeam,
       inStorm: false,
       inHealingBase: false,
+      skinId: chosenSkin,
+      bulletTrail: chosenTrail,
+      roofDecal: chosenDecal,
     };
 
     this.tanks.set(id, tank);
+
     this.tankInputs.set(id, {
       up: false,
       down: false,
@@ -483,6 +504,17 @@ export class GameEngine {
     }
 
     return tank;
+  }
+
+  public updateCosmetics(
+    id: string,
+    cosmetics: { skinId?: TankSkinId; bulletTrail?: BulletTrailId; roofDecal?: RoofDecalId }
+  ) {
+    const tank = this.tanks.get(id);
+    if (!tank) return;
+    if (cosmetics.skinId !== undefined) tank.skinId = cosmetics.skinId;
+    if (cosmetics.bulletTrail !== undefined) tank.bulletTrail = cosmetics.bulletTrail;
+    if (cosmetics.roofDecal !== undefined) tank.roofDecal = cosmetics.roofDecal;
   }
 
   public removePlayer(id: string) {
@@ -1140,6 +1172,7 @@ export class GameEngine {
     const muzzleDist = TANK_RADIUS + 16;
     const spawnX = tank.x + Math.cos(tank.turretAngle) * muzzleDist;
     const spawnY = tank.y + Math.sin(tank.turretAngle) * muzzleDist;
+    const trail = tank.bulletTrail || 'STANDARD';
 
     // Use currently loaded random ammo, then prepare the next random ammo
     const modifier = tank.nextAmmoType || this.getRandomAmmoType();
@@ -1162,6 +1195,9 @@ export class GameEngine {
           color: '#fbbf24',
           isHeavy: tank.tankClass === 'JUGGERNAUT',
           modifier: 'TRIPLE',
+          trailEffect: trail,
+          originX: spawnX,
+          originY: spawnY,
         });
       }
       return;
@@ -1181,6 +1217,9 @@ export class GameEngine {
         color: '#ef4444',
         isHeavy: true,
         modifier: 'EXPLOSIVE',
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1199,6 +1238,9 @@ export class GameEngine {
         color: '#00f0ff',
         isHeavy: false,
         modifier: 'PLASMA',
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1217,6 +1259,9 @@ export class GameEngine {
         color: '#38bdf8',
         isHeavy: false,
         modifier: 'CRYO',
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1235,6 +1280,9 @@ export class GameEngine {
         color: '#f97316',
         isHeavy: false,
         modifier: 'INCENDIARY',
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1254,6 +1302,9 @@ export class GameEngine {
         isHeavy: false,
         modifier: 'RICOCHET',
         bouncesLeft: 2,
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1272,6 +1323,9 @@ export class GameEngine {
         color: '#10b981',
         isHeavy: true,
         modifier: 'PIERCING',
+        trailEffect: trail,
+        originX: spawnX,
+        originY: spawnY,
       });
       return;
     }
@@ -1290,6 +1344,9 @@ export class GameEngine {
       color: tank.color,
       isHeavy: tank.tankClass === 'JUGGERNAUT',
       modifier: 'STANDARD',
+      trailEffect: trail,
+      originX: spawnX,
+      originY: spawnY,
     });
   }
 
@@ -1450,8 +1507,76 @@ export class GameEngine {
           }
         }
 
+        // Check Combat Medals & Accolades
+        let awardedMedal: CombatMedalType | undefined = undefined;
+        const now = Date.now();
+
+        // 1. Sniper Kill: bullet origin distance >= 750
+        const bulletDist = distance(bullet.originX ?? shooter.x, bullet.originY ?? shooter.y, target.x, target.y);
+        const isSniper = bulletDist >= 750;
+
+        // 2. Revenge: shooter was killed by target previously
+        const isRevenge = shooter.lastKilledById === target.id;
+
+        // 3. First Blood
+        const isFirstBlood = !this.firstBloodOccurred;
+        if (isFirstBlood) {
+          this.firstBloodOccurred = true;
+        }
+
+        // 4. Multi-Kill streak window (within 5.5s)
+        const sAny = shooter as { _lastKillTime?: number; _multiKillCount?: number };
+        const lastKillTime = sAny._lastKillTime || 0;
+        let multiCount = 1;
+        if (now - lastKillTime <= 5500) {
+          multiCount = (sAny._multiKillCount || 1) + 1;
+        }
+        sAny._lastKillTime = now;
+        sAny._multiKillCount = multiCount;
+
+        // Select highest honor medal
+        if (shooter.streak >= 10) {
+          awardedMedal = 'GODLIKE';
+        } else if (shooter.streak === 8) {
+          awardedMedal = 'UNSTOPPABLE';
+        } else if (shooter.streak === 5) {
+          awardedMedal = 'RAMPAGE';
+        } else if (multiCount >= 3) {
+          awardedMedal = 'TRIPLE_KILL';
+        } else if (multiCount === 2) {
+          awardedMedal = 'DOUBLE_KILL';
+        } else if (isRevenge) {
+          awardedMedal = 'REVENGE';
+        } else if (isSniper) {
+          awardedMedal = 'SNIPER';
+        } else if (isFirstBlood) {
+          awardedMedal = 'FIRST_BLOOD';
+        }
+
+        // Record target's killer for revenge in subsequent lives
+        target.lastKilledById = shooter.id;
+        if (isRevenge) {
+          shooter.lastKilledById = undefined;
+        }
+
         let killText = `🎯 ${shooter.name} đã tiêu diệt đối thủ ${target.name}!`;
-        if (shooter.streak >= 3) {
+        if (awardedMedal === 'FIRST_BLOOD') {
+          killText = `🩸 [FIRST BLOOD] ${shooter.name} giành CHIẾN CÔNG ĐẦU khi hạ gục ${target.name}!`;
+        } else if (awardedMedal === 'DOUBLE_KILL') {
+          killText = `⚔️ [DOUBLE KILL] ${shooter.name} HẠ GỤC KÉP liên tiếp (${target.name})!`;
+        } else if (awardedMedal === 'TRIPLE_KILL') {
+          killText = `🔥 [TRIPLE KILL] ${shooter.name} HẠ GỤC LIÊN HOÀN 3 XE (${target.name})!`;
+        } else if (awardedMedal === 'RAMPAGE') {
+          killText = `⚡ [RAMPAGE] ${shooter.name} ĐANG CUỒNG NỘ CHIẾN TRẬN (Chuỗi 5 mạng)!`;
+        } else if (awardedMedal === 'UNSTOPPABLE') {
+          killText = `🌪️ [UNSTOPPABLE] ${shooter.name} BẤT KHẢ CHIẾN BẠI (Chuỗi 8 mạng)!`;
+        } else if (awardedMedal === 'GODLIKE') {
+          killText = `👑 [GODLIKE] ${shooter.name} THẦN THÁNH VÔ SONG (Chuỗi 10 mạng)!`;
+        } else if (awardedMedal === 'SNIPER') {
+          killText = `🎯 [SNIPER] ${shooter.name} BẮN TỈA TẦM XA (${Math.round(bulletDist)}m) hạ gục ${target.name}!`;
+        } else if (awardedMedal === 'REVENGE') {
+          killText = `💀 [REVENGE] ${shooter.name} ĐÃ PHỤC THÙ RỬA HẬN trước ${target.name}!`;
+        } else if (shooter.streak >= 3) {
           killText = `🔥 ${shooter.name} đang NỔI GIẬN (${shooter.streak} KILLS) khi hạ gục ${target.name}!`;
         }
 
@@ -1465,6 +1590,8 @@ export class GameEngine {
           killerName: shooter.name,
           victimName: target.name,
           color: '#ef4444',
+          streak: shooter.streak,
+          medal: awardedMedal,
         });
       }
     }

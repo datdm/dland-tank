@@ -30,6 +30,12 @@ import {
   BossInfo,
   BaseZone,
   Team,
+  TankSkinId,
+  BulletTrailId,
+  RoofDecalId,
+  TANK_SKINS,
+  BULLET_TRAILS,
+  ROOF_DECALS,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -44,10 +50,15 @@ import { HelpModal } from './components/HelpModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
 import { SkillBarHUD } from './components/SkillBarHUD';
 import { PerkSelectModal } from './components/PerkSelectModal';
+import { GarageModal } from './components/GarageModal';
 import { sounds } from './utils/audio';
 import {
   Volume2,
   VolumeX,
+  Palette,
+  Music,
+  Sliders,
+  Radio,
   Shield,
   Zap,
   Users,
@@ -130,6 +141,19 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
   const [botCount, setBotCount] = useState(7);
 
+  // Cosmetics & Workshop state
+  const [userSkin, setUserSkin] = useState<TankSkinId>(() => (localStorage.getItem('tank_skin') as TankSkinId) || 'DEFAULT');
+  const [userTrail, setUserTrail] = useState<BulletTrailId>(() => (localStorage.getItem('tank_trail') as BulletTrailId) || 'STANDARD');
+  const [userDecal, setUserDecal] = useState<RoofDecalId>(() => (localStorage.getItem('tank_decal') as RoofDecalId) || 'FLAG_VIETNAM');
+  const [isGarageOpen, setIsGarageOpen] = useState(false);
+
+  // Audio Settings & BGM state
+  const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
+  const [musicVol, setMusicVol] = useState(Math.round(sounds.getMusicVolume() * 100));
+  const [sfxVol, setSfxVol] = useState(Math.round(sounds.getSfxVolume() * 100));
+  const [voiceEnabled, setVoiceEnabled] = useState(sounds.getVoiceEnabled());
+  const [isMusicPlaying, setIsMusicPlaying] = useState(sounds.getIsMusicPlaying());
+
   // Dynamic 1-Minute Weather Cycle System
   const [currentWeatherIndex, setCurrentWeatherIndex] = useState(0);
   const [weatherSecondsLeft, setWeatherSecondsLeft] = useState(60);
@@ -167,6 +191,9 @@ export default function App() {
     botCount: number;
     roomId?: string;
     team?: Team;
+    skinId?: TankSkinId;
+    bulletTrail?: BulletTrailId;
+    roofDecal?: RoofDecalId;
   }>({
     name: 'Chỉ Huy',
     color: '#2563eb',
@@ -180,6 +207,8 @@ export default function App() {
   useEffect(() => {
     isInGameRef.current = isInGame;
   }, [isInGame]);
+
+  const prevBossAliveRef = useRef(false);
 
   // 1-Minute Weather Cycle Timer (60 seconds per weather atmosphere)
   useEffect(() => {
@@ -197,6 +226,10 @@ export default function App() {
               themeColor: cfg.themeColor,
             });
             sounds.playPowerUp();
+            sounds.announce(
+              `Weather change: ${cfg.name}`,
+              `Thời tiết chiến trường: ${cfg.vietnameseName}! ${cfg.description}`
+            );
             return nextIdx;
           });
           return 60;
@@ -338,6 +371,21 @@ export default function App() {
         skill,
       };
       socketRef.current.send(JSON.stringify(msg));
+
+      // Tactical Voice Announcer & SFX
+      if (skill === 'BOOST') {
+        sounds.playPowerUp();
+        sounds.announce('Nitro Boost Activated!', 'Kích hoạt Tăng Tốc!');
+      } else if (skill === 'SHIELD') {
+        sounds.playPowerUp();
+        sounds.announce('Energy Shield Online!', 'Kích hoạt Khiên Chắn Năng Lượng!');
+      } else if (skill === 'MINE') {
+        sounds.playHit();
+        sounds.announce('Tactical Mine Deployed!', 'Đã rải Mìn Chiến Thuật!');
+      } else if (skill === 'BARRAGE') {
+        sounds.playShoot(true);
+        sounds.announce('Artillery Barrage Fired!', 'Khai hỏa Bão Lửa Pháo Kích!');
+      }
     }
   };
 
@@ -443,9 +491,20 @@ export default function App() {
 
               // Unpack Game Mode State on each tick
               if (msg.snapshot.storm) setStorm(msg.snapshot.storm);
-              if (msg.snapshot.teamScore) setTeamScore(msg.snapshot.teamScore);
-              setBoss(msg.snapshot.boss || null);
-              if (msg.snapshot.bases) setBases(msg.snapshot.bases);
+              if (msg.snapshot.boss) {
+                if (!prevBossAliveRef.current && msg.snapshot.boss.isAlive) {
+                  sounds.playExplosion();
+                  sounds.announce(
+                    'Warning! World Boss Leviathan has arrived!',
+                    'Cảnh báo chiến trường! Siêu Boss Thiết Giáp Leviathan đã xuất hiện!'
+                  );
+                }
+                prevBossAliveRef.current = !!msg.snapshot.boss.isAlive;
+                setBoss(msg.snapshot.boss);
+              } else {
+                prevBossAliveRef.current = false;
+                setBoss(null);
+              }
               if (msg.snapshot.aliveCount !== undefined) setAliveCount(msg.snapshot.aliveCount);
               if (msg.snapshot.totalParticipants !== undefined) setTotalParticipants(msg.snapshot.totalParticipants);
               setBrWinner(msg.snapshot.brWinner || null);
@@ -822,7 +881,10 @@ export default function App() {
     selectedBots: number,
     customRoomId?: string,
     spectator: boolean = false,
-    team?: Team
+    team?: Team,
+    skinId?: TankSkinId,
+    bulletTrail?: BulletTrailId,
+    roofDecal?: RoofDecalId
   ) => {
     setGameMode(mode);
     setBotCount(selectedBots);
@@ -830,6 +892,15 @@ export default function App() {
     if (spectator) {
       setSpectatorTargetId('free');
     }
+
+    if (skinId) setUserSkin(skinId);
+    if (bulletTrail) setUserTrail(bulletTrail);
+    if (roofDecal) setUserDecal(roofDecal);
+
+    const finalSkin = skinId || userSkin;
+    const finalTrail = bulletTrail || userTrail;
+    const finalDecal = roofDecal || userDecal;
+
     profileRef.current = {
       name,
       color,
@@ -838,7 +909,13 @@ export default function App() {
       botCount: selectedBots,
       roomId: customRoomId || 'public',
       team,
+      skinId: finalSkin,
+      bulletTrail: finalTrail,
+      roofDecal: finalDecal,
     };
+
+    // Auto-start procedural epic military battle BGM
+    sounds.startBgm();
 
     const transmitJoin = () => {
       if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -852,6 +929,9 @@ export default function App() {
           botCount: selectedBots,
           isSpectator: spectator,
           team,
+          skinId: finalSkin,
+          bulletTrail: finalTrail,
+          roofDecal: finalDecal,
         };
         socketRef.current.send(JSON.stringify(joinMsg));
       }
@@ -869,6 +949,34 @@ export default function App() {
       setTimeout(() => clearInterval(waitInterval), 4000);
     }
     setIsInGame(true);
+  };
+
+  const handleSaveCosmetics = (cosmetics: {
+    skinId: TankSkinId;
+    bulletTrail: BulletTrailId;
+    roofDecal: RoofDecalId;
+  }) => {
+    setUserSkin(cosmetics.skinId);
+    setUserTrail(cosmetics.bulletTrail);
+    setUserDecal(cosmetics.roofDecal);
+    localStorage.setItem('tank_skin', cosmetics.skinId);
+    localStorage.setItem('tank_trail', cosmetics.bulletTrail);
+    localStorage.setItem('tank_decal', cosmetics.roofDecal);
+
+    profileRef.current.skinId = cosmetics.skinId;
+    profileRef.current.bulletTrail = cosmetics.bulletTrail;
+    profileRef.current.roofDecal = cosmetics.roofDecal;
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: 'UPDATE_COSMETICS',
+          skinId: cosmetics.skinId,
+          bulletTrail: cosmetics.bulletTrail,
+          roofDecal: cosmetics.roofDecal,
+        })
+      );
+    }
   };
 
   const handleToggleSpectator = (targetSpectatorState?: boolean) => {
@@ -1052,9 +1160,29 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: 5. Loa, 6. Help, 7. Đổi xe, 8. Ẩn thanh */}
+          {/* Right: Loa, Âm thanh, Gara xe, Help, Đổi xe, Khán giả, Thoát, Ẩn thanh */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Loa */}
+            {/* Gara Tùy Biến Xe Tăng & Skin Ngoại Trang */}
+            <button
+              onClick={() => setIsGarageOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-fuchsia-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-fuchsia-500/50 hover:border-fuchsia-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              title="Gara Tùy Biến Xe Tăng & Skin Ngoại Trang (Garage Workshop)"
+            >
+              <Palette className="w-3.5 h-3.5 text-fuchsia-400" />
+              <span>Gara Xe</span>
+            </button>
+
+            {/* Cài đặt Âm thanh & Phát thanh viên */}
+            <button
+              onClick={() => setIsAudioSettingsOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              title="Tùy chỉnh Nhạc nền & Giọng phát thanh viên"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Âm Thanh</span>
+            </button>
+
+            {/* Quick Mute Loa */}
             <button
               onClick={handleToggleMute}
               className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm"
@@ -1141,6 +1269,24 @@ export default function App() {
             <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
             <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}</span>
           </div>
+
+          <button
+            onClick={() => setIsGarageOpen(true)}
+            className="flex items-center gap-1 bg-fuchsia-950/80 hover:bg-fuchsia-900 border border-fuchsia-500/60 text-fuchsia-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
+            title="Mở Gara Tùy Biến Xe Tăng"
+          >
+            <Palette className="w-3 h-3 text-fuchsia-400" />
+            <span>Gara</span>
+          </button>
+
+          <button
+            onClick={() => setIsAudioSettingsOpen(true)}
+            className="flex items-center gap-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/60 text-amber-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
+            title="Tùy chỉnh Âm thanh"
+          >
+            <Sliders className="w-3 h-3 text-amber-400" />
+            <span>Âm Thanh</span>
+          </button>
 
           <button
             onClick={handleExitGame}
@@ -1796,6 +1942,146 @@ export default function App() {
 
       {/* 4. Controls & Help Modal */}
       <HelpModal isOpen={isControlsModalOpen} onClose={() => setIsControlsModalOpen(false)} />
+
+      {/* 5. In-Game Garage / Skin Workshop Modal */}
+      <GarageModal
+        isOpen={isGarageOpen}
+        onClose={() => setIsGarageOpen(false)}
+        tankClass={profileRef.current.tankClass}
+        currentSkin={userSkin}
+        currentTrail={userTrail}
+        currentDecal={userDecal}
+        tankColor={profileRef.current.color}
+        onSaveCosmetics={handleSaveCosmetics}
+      />
+
+      {/* 6. In-Game Audio & Tactical Announcer Settings Modal */}
+      {isAudioSettingsOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white font-mono">ÂM THANH CHIẾN TRƯỜNG</h3>
+                  <p className="text-[11px] text-slate-400">Tùy chỉnh nhạc nền chiến trận & giọng đọc chiến sự</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAudioSettingsOpen(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* 1. Epic Military Battle BGM Slider */}
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <Music className="w-4 h-4 text-amber-400" />
+                    <span>Nhạc Nền Chiến Trận (BGM)</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isPlaying = sounds.toggleMusic();
+                      setIsMusicPlaying(isPlaying);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold border transition-colors cursor-pointer ${
+                      isMusicPlaying
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}
+                  >
+                    {isMusicPlaying ? 'Đang Phát 🔊' : 'Đang Tắt 🔇'}
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={musicVol}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setMusicVol(val);
+                    sounds.setMusicVolume(val / 100);
+                  }}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                  <span>Im lặng</span>
+                  <span className="text-amber-300 font-bold">{musicVol}%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+
+              {/* 2. Sound Effects (SFX) Slider */}
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-sky-400" />
+                    <span>Hiệu Ứng Bắn & Đạn Pháo (SFX)</span>
+                  </span>
+                  <span className="font-mono text-sky-300 text-xs font-bold">{sfxVol}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={sfxVol}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    setSfxVol(val);
+                    sounds.setSfxVolume(val / 100);
+                  }}
+                  className="w-full accent-sky-500 cursor-pointer"
+                />
+              </div>
+
+              {/* 3. Tactical Voice Announcer Toggle */}
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Radio className="w-4 h-4 text-purple-400" />
+                  <div>
+                    <div className="text-xs font-bold text-white">Giọng Phát Thanh Viên (Voice)</div>
+                    <div className="text-[10px] text-slate-400">Đọc chuỗi hạ gục, thời tiết, boss xuất hiện, kỹ năng</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !voiceEnabled;
+                    setVoiceEnabled(next);
+                    sounds.setVoiceEnabled(next);
+                    if (next) {
+                      sounds.announce('Tactical Announcer Activated', 'Đã kích hoạt giọng phát thanh viên chiến trường!');
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-all cursor-pointer ${
+                    voiceEnabled
+                      ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-600/30'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  {voiceEnabled ? 'BẬT' : 'TẮT'}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsAudioSettingsOpen(false)}
+              className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            >
+              Đóng Cài Đặt
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

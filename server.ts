@@ -192,7 +192,17 @@ async function startServer() {
             socketRooms.set(ws, targetRoomId);
 
             if (!msg.isSpectator) {
-              targetRoom.game.addPlayer(playerId, msg.name, msg.color, msg.tankClass, false, msg.team);
+              targetRoom.game.addPlayer(
+                playerId,
+                msg.name,
+                msg.color,
+                msg.tankClass,
+                false,
+                msg.team,
+                msg.skinId,
+                msg.bulletTrail,
+                msg.roofDecal
+              );
             }
 
             // Send full initial state
@@ -290,6 +300,17 @@ async function startServer() {
           case 'SELECT_PERK': {
             if (currentRoom && msg.perkId) {
               currentRoom.game.selectPerk(playerId, msg.perkId);
+            }
+            break;
+          }
+
+          case 'UPDATE_COSMETICS': {
+            if (currentRoom) {
+              currentRoom.game.updateCosmetics(playerId, {
+                skinId: msg.skinId,
+                bulletTrail: msg.bulletTrail,
+                roofDecal: msg.roofDecal,
+              });
             }
             break;
           }
