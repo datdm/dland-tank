@@ -23,6 +23,7 @@ import {
   WEATHER_CONFIGS,
   WEATHER_CYCLE,
   SkillType,
+  AimMode,
   Landmine,
   PerkId,
   StormZone,
@@ -43,7 +44,7 @@ import { Scoreboard } from './components/Scoreboard';
 import { KillFeed } from './components/KillFeed';
 import { KillBanner } from './components/KillBanner';
 import { ChatBox } from './components/ChatBox';
-import { LobbyModal } from './components/LobbyModal';
+import { HomePage } from './components/HomePage';
 import { RespawnOverlay } from './components/RespawnOverlay';
 import { SpectatorHUD } from './components/SpectatorHUD';
 import { HelpModal } from './components/HelpModal';
@@ -82,6 +83,7 @@ import {
   Swords,
   Video,
   Crosshair,
+  Target,
   AlertTriangle,
   Crown,
   Skull,
@@ -171,6 +173,18 @@ export default function App() {
   const [focusBeacon, setFocusBeacon] = useState<{ x: number; y: number; timestamp: number } | null>(null);
   const [isFreeCameraActive, setIsFreeCameraActive] = useState(false);
 
+  // Tank Aiming & Firing Mode: 'MOVEMENT' (Classic Tank 1990) | 'MOUSE' (Modern 360°)
+  const [aimMode, setAimMode] = useState<AimMode>(() => {
+    return (localStorage.getItem('tank_aim_mode') as AimMode) || 'MOVEMENT';
+  });
+  const aimModeRef = useRef<AimMode>(aimMode);
+  useEffect(() => {
+    aimModeRef.current = aimMode;
+    localStorage.setItem('tank_aim_mode', aimMode);
+  }, [aimMode]);
+
+  const lastMoveAngleRef = useRef<number>(0);
+
   const socketRef = useRef<WebSocket | null>(null);
   const isInGameRef = useRef(false);
   const inputStateRef = useRef({
@@ -181,6 +195,29 @@ export default function App() {
     turretAngle: 0,
     isFiring: false,
   });
+
+  // Calculate turret angle from WASD movement directions (Tank 1990 style)
+  const updateAimAngleFromMovement = useCallback(() => {
+    if (aimModeRef.current !== 'MOVEMENT') return false;
+
+    const { up, down, left, right } = inputStateRef.current;
+    let dx = 0;
+    let dy = 0;
+    if (left) dx -= 1;
+    if (right) dx += 1;
+    if (up) dy -= 1;
+    if (down) dy += 1;
+
+    if (dx !== 0 || dy !== 0) {
+      const angle = Math.atan2(dy, dx);
+      lastMoveAngleRef.current = angle;
+      if (inputStateRef.current.turretAngle !== angle) {
+        inputStateRef.current.turretAngle = angle;
+        return true;
+      }
+    }
+    return false;
+  }, []);
 
   // Track player profile for joining/reconnecting
   const profileRef = useRef<{
@@ -740,18 +777,18 @@ export default function App() {
         }
       }
 
-      // Tactical Skill Shortcuts: Shift (Boost), Space/Q (Shield), E/F (Mine), R (Barrage)
+      // Tactical Skill Shortcuts: Shift (Boost), Q/F (Shield), E (Mine), R (Barrage)
       if (e.key === 'Shift' || k === 'shift') {
         e.preventDefault();
         handleUseSkill('BOOST');
         return;
       }
-      if (e.code === 'Space' || k === 'q') {
+      if (k === 'q' || k === 'f') {
         e.preventDefault();
         handleUseSkill('SHIELD');
         return;
       }
-      if (k === 'e' || k === 'f') {
+      if (k === 'e') {
         e.preventDefault();
         handleUseSkill('MINE');
         return;
@@ -762,7 +799,34 @@ export default function App() {
         return;
       }
 
+      // Hotkey C: Toggle Aim Mode (Movement Direction vs Mouse Look 360°)
+      if (k === 'c') {
+        e.preventDefault();
+        const nextMode = aimModeRef.current === 'MOVEMENT' ? 'MOUSE' : 'MOVEMENT';
+        setAimMode(nextMode);
+        sounds.playPowerUp();
+        setWeatherToast({
+          name: nextMode === 'MOVEMENT' ? 'BẮN THEO HƯỚNG XE' : 'BẮN THEO CHUỘT 360°',
+          icon: nextMode === 'MOVEMENT' ? '🎯' : '🖱️',
+          description: nextMode === 'MOVEMENT'
+            ? 'Pháo tự động nhắm theo hướng xe chạy (Tank 1990). Bấm Space / J / Chuột để bắn!'
+            : 'Pháo xoay tự do 360° theo con trỏ chuột.',
+          themeColor: nextMode === 'MOVEMENT' ? '#10b981' : '#38bdf8',
+        });
+        return;
+      }
+
       let changed = false;
+
+      // Primary Cannon Firing with Spacebar or J Key
+      if (e.code === 'Space' || k === 'j') {
+        e.preventDefault();
+        if (!inputStateRef.current.isFiring) {
+          inputStateRef.current.isFiring = true;
+          changed = true;
+        }
+      }
+
       if (k === 'w' || k === 'arrowup') {
         setIsFreeCameraActive(false);
         if (!inputStateRef.current.up) {
@@ -793,6 +857,9 @@ export default function App() {
       }
 
       if (changed) {
+        if (aimModeRef.current === 'MOVEMENT') {
+          updateAimAngleFromMovement();
+        }
         sendInput();
       }
     };
@@ -826,7 +893,7 @@ export default function App() {
           changed = true;
         }
       }
-      if (e.code === 'Space') {
+      if (e.code === 'Space' || k === 'j') {
         if (inputStateRef.current.isFiring) {
           inputStateRef.current.isFiring = false;
           changed = true;
@@ -834,6 +901,9 @@ export default function App() {
       }
 
       if (changed) {
+        if (aimModeRef.current === 'MOVEMENT') {
+          updateAimAngleFromMovement();
+        }
         sendInput();
       }
     };
@@ -844,10 +914,14 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isChatOpen, sendInput]);
+  }, [isChatOpen, sendInput, updateAimAngleFromMovement]);
 
   // Handle Mouse Movement and Firing
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (aimModeRef.current === 'MOVEMENT') {
+      // In Movement Aim mode, mouse look is disabled so nòng pháo locks to movement
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const centerX = rect.width / 2;
     const centerY = rect.height / 2;
@@ -1076,6 +1150,43 @@ export default function App() {
     return 'Khu Thử Nghiệm Đông Nam';
   };
 
+  if (!isInGame) {
+    return (
+      <div className="relative w-screen h-screen overflow-x-hidden bg-slate-950 font-sans select-none flex flex-col">
+        {/* AFK Kicked Notice Banner */}
+        {afkNotice && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
+            <div className="flex items-center justify-between gap-3 bg-slate-950/95 border-2 border-rose-500 text-white p-3.5 rounded-2xl shadow-2xl backdrop-blur-md">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 animate-bounce" />
+                <span className="text-xs font-bold leading-snug text-rose-200">{afkNotice}</span>
+              </div>
+              <button
+                onClick={() => setAfkNotice(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0"
+                title="Đóng thông báo"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <HomePage
+          onJoin={handleJoinGame}
+          onlineCount={lobbyInfo.publicOnlineCount}
+          isSocketConnected={isSocketConnected}
+          publicPlayers={lobbyInfo.publicPlayers}
+          initialMode={gameMode}
+          currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
+          ping={ping}
+          aimMode={aimMode}
+          onAimModeChange={setAimMode}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 font-sans select-none flex flex-col">
       {/* 1. Universal Top Bar (DLAND TANK) */}
@@ -1162,6 +1273,35 @@ export default function App() {
 
           {/* Right: Loa, Âm thanh, Gara xe, Help, Đổi xe, Khán giả, Thoát, Ẩn thanh */}
           <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Quick Aim Mode Toggle: Movement Direction (Tank 1990) vs Mouse 360° */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextMode = aimMode === 'MOVEMENT' ? 'MOUSE' : 'MOVEMENT';
+                setAimMode(nextMode);
+                sounds.playPowerUp();
+                setWeatherToast({
+                  name: nextMode === 'MOVEMENT' ? 'BẮN THEO HƯỚNG XE' : 'BẮN THEO CHUỘT 360°',
+                  icon: nextMode === 'MOVEMENT' ? '🎯' : '🖱️',
+                  description: nextMode === 'MOVEMENT'
+                    ? 'Pháo tự động nhắm theo hướng xe chạy (Tank 1990). Bấm Space / J / Chuột để bắn!'
+                    : 'Pháo xoay tự do 360° theo con trỏ chuột.',
+                  themeColor: nextMode === 'MOVEMENT' ? '#10b981' : '#38bdf8',
+                });
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+                aimMode === 'MOVEMENT'
+                  ? 'bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 border-emerald-500/60'
+                  : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border-sky-500/40'
+              }`}
+              title="Đổi chế độ ngắm bắn: Theo hướng di chuyển (Tank 1990) / Theo chuột 360° (Phím tắt C)"
+            >
+              <Target className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden xl:inline">{aimMode === 'MOVEMENT' ? 'Bắn Hướng Xe (Tank 1990)' : 'Bắn Theo Chuột 360°'}</span>
+              <span className="xl:hidden">{aimMode === 'MOVEMENT' ? 'Hướng Xe' : 'Chuột'}</span>
+              <kbd className="px-1 py-0.2 bg-slate-900/90 border border-slate-700 rounded text-[9px] text-amber-300 font-mono">C</kbd>
+            </button>
+
             {/* Gara Tùy Biến Xe Tăng & Skin Ngoại Trang */}
             <button
               onClick={() => setIsGarageOpen(true)}
@@ -1907,38 +2047,7 @@ export default function App() {
         )}
       </div>
 
-      {/* 3. Lobby / Tank Selection Modal */}
-      {!isInGame && (
-        <>
-          {/* AFK Kicked Notice Banner */}
-          {afkNotice && (
-            <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
-              <div className="flex items-center justify-between gap-3 bg-slate-950/95 border-2 border-rose-500 text-white p-3.5 rounded-2xl shadow-2xl backdrop-blur-md">
-                <div className="flex items-center gap-2.5">
-                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 animate-bounce" />
-                  <span className="text-xs font-bold leading-snug text-rose-200">{afkNotice}</span>
-                </div>
-                <button
-                  onClick={() => setAfkNotice(null)}
-                  className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0"
-                  title="Đóng thông báo"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
 
-          <LobbyModal
-            onJoin={handleJoinGame}
-            onlineCount={lobbyInfo.publicOnlineCount}
-            isSocketConnected={isSocketConnected}
-            publicPlayers={lobbyInfo.publicPlayers}
-            initialMode={gameMode}
-            currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
-          />
-        </>
-      )}
 
       {/* 4. Controls & Help Modal */}
       <HelpModal isOpen={isControlsModalOpen} onClose={() => setIsControlsModalOpen(false)} />

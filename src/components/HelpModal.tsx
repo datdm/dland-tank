@@ -146,12 +146,12 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                     <p className="text-slate-400 mt-0.5">Di chuyển 8 hướng linh hoạt, tự động trượt mượt khi cọ xát tường.</p>
                   </div>
                   <div className="p-2 bg-slate-900/90 rounded-lg border border-slate-800">
-                    <span className="font-mono font-bold text-sky-300">Chuột (Mouse Look)</span>
-                    <p className="text-slate-400 mt-0.5">Xoay nòng pháo 360° độc lập hoàn toàn với hướng thân xe.</p>
+                    <span className="font-mono font-bold text-emerald-300">Phím C (Chế độ ngắm bắn)</span>
+                    <p className="text-slate-400 mt-0.5">Chuyển đổi tức thì: <strong>Theo hướng di chuyển (Tank 1990)</strong> hoặc <strong>Theo chuột 360°</strong>.</p>
                   </div>
                   <div className="p-2 bg-slate-900/90 rounded-lg border border-slate-800">
-                    <span className="font-mono font-bold text-sky-300">Chuột Trái / Space</span>
-                    <p className="text-slate-400 mt-0.5">Bắn đạn pháo liên tục theo tốc độ nạp của xe.</p>
+                    <span className="font-mono font-bold text-sky-300">Space / Phím J / Chuột Trái</span>
+                    <p className="text-slate-400 mt-0.5">Khai hỏa nòng pháo liên tục theo tốc độ nạp của xe. Thuần bàn phím!</p>
                   </div>
                   <div className="p-2 bg-slate-900/90 rounded-lg border border-slate-800">
                     <span className="font-mono font-bold text-sky-300">Enter / Esc</span>
@@ -229,7 +229,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                     <div>
                       <span className="font-extrabold text-sm text-white">Khiên Từ Trường Bảo Vệ (Force Shield)</span>
                       <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 font-mono font-bold">
-                        [Space] hoặc [Q]
+                        [Q] hoặc [F]
                       </span>
                     </div>
                   </div>

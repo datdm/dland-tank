@@ -57,6 +57,7 @@ export type BulletModifier =
   | 'INCENDIARY'
   | 'RICOCHET'
   | 'PIERCING';
+export type AimMode = 'MOVEMENT' | 'MOUSE';
 
 export type SkillType = 'BOOST' | 'SHIELD' | 'MINE' | 'BARRAGE';
 
