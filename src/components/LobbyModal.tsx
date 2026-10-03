@@ -135,12 +135,16 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
       const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
       const isSmallScreen = window.innerWidth < 768;
       const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
-
-      if ((isMobileUA || (isTouch && isSmallScreen)) && !sessionStorage.getItem('dismissed_mobile_notice')) {
+      const isPortrait = window.innerHeight > window.innerWidth;
+      if ((isMobileUA || (isTouch && isSmallScreen)) && isPortrait && !sessionStorage.getItem('dismissed_mobile_notice')) {
         setShowMobileMaintenance(true);
+      } else {
+        setShowMobileMaintenance(false);
       }
     };
     checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
   const currentStats = TANK_CLASSES[tankClass];

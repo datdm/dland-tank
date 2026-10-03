@@ -52,6 +52,7 @@ import { VirtualJoystick } from './components/VirtualJoystick';
 import { SkillBarHUD } from './components/SkillBarHUD';
 import { PerkSelectModal } from './components/PerkSelectModal';
 import { GarageModal } from './components/GarageModal';
+import { OrientationGuard } from './components/OrientationGuard';
 import { sounds } from './utils/audio';
 import {
   Volume2,
@@ -96,7 +97,28 @@ export default function App() {
   const [myPlayerId, setMyPlayerId] = useState<string>('');
   const [worldSize, setWorldSize] = useState({ width: 4200, height: 4200 });
   const [is25DMode, setIs25DMode] = useState(true);
-  const [zoomScale, setZoomScale] = useState(0.75); // 75% default ratio like Chrome
+  const [isShortLandscape, setIsShortLandscape] = useState(() => {
+    return typeof window !== 'undefined' && window.innerHeight <= 560 && window.innerWidth > window.innerHeight;
+  });
+  const [isAutoZoom, setIsAutoZoom] = useState(true);
+  const [zoomScale, setZoomScale] = useState(0.75);
+
+  // Dynamic Screen-Adaptive Battlefield Camera Zoom
+  const getScreenAdaptiveZoom = () => {
+    if (typeof window === 'undefined') return 0.75;
+    const h = window.innerHeight;
+    const w = window.innerWidth;
+    if (h <= 450 && w > h) {
+      // Mobile landscape screen (e.g. iPhone, Android height ~360-430px)
+      return Math.min(0.60, Math.max(0.48, Math.round(((h / 700) * 0.75) * 100) / 100));
+    } else if (h <= 600 && w > h) {
+      return Math.min(0.70, Math.max(0.55, Math.round(((h / 720) * 0.75) * 100) / 100));
+    } else {
+      return 0.75;
+    }
+  };
+
+  const effectiveZoomScale = isAutoZoom ? getScreenAdaptiveZoom() : zoomScale;
   const [gameMode, setGameMode] = useState<GameMode>('PUBLIC');
   const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [lobbyInfo, setLobbyInfo] = useState<{
@@ -244,6 +266,21 @@ export default function App() {
   useEffect(() => {
     isInGameRef.current = isInGame;
   }, [isInGame]);
+
+  // Viewport resize tracking for short landscape mobile scaling
+  useEffect(() => {
+    const handleViewport = () => {
+      const isShort = window.innerHeight <= 560 && window.innerWidth > window.innerHeight;
+      setIsShortLandscape(isShort);
+    };
+    handleViewport();
+    window.addEventListener('resize', handleViewport);
+    window.addEventListener('orientationchange', handleViewport);
+    return () => {
+      window.removeEventListener('resize', handleViewport);
+      window.removeEventListener('orientationchange', handleViewport);
+    };
+  }, []);
 
   const prevBossAliveRef = useRef(false);
 
@@ -711,16 +748,19 @@ export default function App() {
       // Zoom Scale Shortcuts like Chrome: - (zoom out), + / = (zoom in), 0 (reset 75%)
       if (e.key === '-' || e.key === '_') {
         e.preventDefault();
-        setZoomScale((prev) => Math.max(0.5, Math.round((prev - 0.1) * 100) / 100));
+        setIsAutoZoom(false);
+        setZoomScale((prev: number) => Math.max(0.45, Math.round((prev - 0.1) * 100) / 100));
         return;
       }
       if (e.key === '=' || e.key === '+') {
         e.preventDefault();
-        setZoomScale((prev) => Math.min(1.25, Math.round((prev + 0.1) * 100) / 100));
+        setIsAutoZoom(false);
+        setZoomScale((prev: number) => Math.min(1.25, Math.round((prev + 0.1) * 100) / 100));
         return;
       }
       if (e.key === '0') {
         e.preventDefault();
+        setIsAutoZoom(true);
         setZoomScale(0.75);
         return;
       }
@@ -1153,6 +1193,9 @@ export default function App() {
   if (!isInGame) {
     return (
       <div className="relative w-screen h-screen overflow-x-hidden bg-slate-950 font-sans select-none flex flex-col">
+        {/* Fullscreen Orientation Guard for Mobile: Restricts to Landscape mode */}
+        <OrientationGuard />
+
         {/* AFK Kicked Notice Banner */}
         {afkNotice && (
           <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
@@ -1189,50 +1232,71 @@ export default function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 font-sans select-none flex flex-col">
+      {/* Fullscreen Orientation Guard for Mobile: Restricts to Landscape mode */}
+      <OrientationGuard />
+
       {/* 1. Universal Top Bar (DLAND TANK) */}
       {showTopBar && (
-        <header className="h-14 bg-slate-900/95 border-b border-slate-800/80 px-3 sm:px-5 flex items-center justify-between z-30 shrink-0 select-none backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150">
+        <header className={`${
+          isShortLandscape ? 'h-9 px-1.5 sm:px-3' : 'h-14 px-3 sm:px-5'
+        } bg-slate-900/95 border-b border-slate-800/80 flex items-center justify-between z-30 shrink-0 select-none backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150`}>
           {/* Left: 1. Tiêu đề DLAND TANK & 2. Số người chơi */}
-          <div className="flex items-center gap-2.5 sm:gap-3.5">
-            <span className="text-base sm:text-lg font-black tracking-tight text-white font-mono flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            <span className={`${isShortLandscape ? 'text-xs' : 'text-base sm:text-lg'} font-black tracking-tight text-white font-mono flex items-center gap-1 sm:gap-2`}>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               DLAND TANK
             </span>
 
             {/* Số người chơi */}
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 text-xs font-semibold text-slate-200 shadow-sm"
+              className={`flex items-center gap-1 px-1.5 py-0.5 sm:py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-semibold text-slate-200 shadow-sm ${
+                isShortLandscape ? 'text-[10px]' : 'text-xs'
+              }`}
               title="Số người chơi đang trực tuyến"
             >
-              <Users className="w-3.5 h-3.5 text-sky-400" />
+              <Users className="w-3 h-3 text-sky-400" />
               <span>
                 {gameMode === 'PUBLIC'
-                  ? `${Math.max(tanks.filter((t) => !t.isBot).length, lobbyInfo.publicOnlineCount, isInGame ? 1 : 0)} Người Chơi`
-                  : `${tanks.length || (isInGame ? 1 : 0)} Người Chơi`}
+                  ? `${Math.max(tanks.filter((t) => !t.isBot).length, lobbyInfo.publicOnlineCount, isInGame ? 1 : 0)} Xe`
+                  : `${tanks.length || (isInGame ? 1 : 0)} Xe`}
               </span>
             </div>
           </div>
 
-          {/* Center: 3. Đổi kích thước & 4. Ping */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* Center: 3. Đổi kích thước (Adaptive Screen Zoom) & 4. Ping */}
+          <div className="flex items-center gap-1.5 sm:gap-3">
             {/* Đổi kích thước */}
             <div
-              className="flex items-center bg-slate-800/90 rounded-lg px-1.5 py-0.5 border border-slate-700/80 text-xs shadow-sm"
-              title="Đổi kích thước / Tỉ lệ hiển thị (Mặc định 75% như Chrome)"
+              className="flex items-center bg-slate-800/90 rounded-lg px-1 py-0.5 border border-slate-700/80 text-[10px] sm:text-xs shadow-sm"
+              title="Tỉ lệ hiển thị chiến trường (Tự động thích ứng màn hình hoặc chỉnh tay)"
             >
               <button
-                onClick={() => setZoomScale((prev) => Math.max(0.5, Math.round((prev - 0.1) * 100) / 100))}
-                className="p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
+                onClick={() => {
+                  setIsAutoZoom(false);
+                  setZoomScale((prev: number) => Math.max(0.48, Math.round(((isAutoZoom ? effectiveZoomScale : prev) - 0.08) * 100) / 100));
+                }}
+                className="p-0.5 sm:p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
                 title="Thu nhỏ (-)"
               >
-                <Minus className="w-3.5 h-3.5" />
+                <Minus className="w-3 h-3" />
               </button>
               <select
-                value={zoomScale}
-                onChange={(e) => setZoomScale(Number(e.target.value))}
-                className="bg-transparent text-sky-300 font-mono text-xs font-bold px-1 cursor-pointer focus:outline-none text-center"
+                value={isAutoZoom ? 'AUTO' : zoomScale}
+                onChange={(e) => {
+                  if (e.target.value === 'AUTO') {
+                    setIsAutoZoom(true);
+                  } else {
+                    setIsAutoZoom(false);
+                    setZoomScale(Number(e.target.value));
+                  }
+                }}
+                className="bg-transparent text-sky-300 font-mono text-[10px] sm:text-xs font-bold px-0.5 cursor-pointer focus:outline-none text-center"
               >
+                <option value="AUTO" className="bg-slate-900 text-amber-300 font-bold">
+                  Auto ({Math.round(effectiveZoomScale * 100)}%)
+                </option>
                 <option value={0.5} className="bg-slate-900 text-slate-200">50%</option>
+                <option value={0.6} className="bg-slate-900 text-slate-200">60%</option>
                 <option value={0.67} className="bg-slate-900 text-slate-200">67%</option>
                 <option value={0.75} className="bg-slate-900 text-slate-200">75% (Chuẩn)</option>
                 <option value={0.9} className="bg-slate-900 text-slate-200">90%</option>
@@ -1240,39 +1304,46 @@ export default function App() {
                 <option value={1.25} className="bg-slate-900 text-slate-200">125%</option>
               </select>
               <button
-                onClick={() => setZoomScale((prev) => Math.min(1.25, Math.round((prev + 0.1) * 100) / 100))}
-                className="p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
+                onClick={() => {
+                  setIsAutoZoom(false);
+                  setZoomScale((prev: number) => Math.min(1.25, Math.round(((isAutoZoom ? effectiveZoomScale : prev) + 0.08) * 100) / 100));
+                }}
+                className="p-0.5 sm:p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
                 title="Phóng to (+)"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3 h-3" />
               </button>
             </div>
 
             {/* Ping */}
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 text-xs font-mono tabular-nums shadow-sm"
+              className={`flex items-center gap-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-mono tabular-nums shadow-sm ${
+                isShortLandscape ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs'
+              }`}
               title="Độ trễ mạng qua WebSocket (Ping)"
             >
-              <span className={`w-2 h-2 rounded-full ${ping < 80 ? 'bg-emerald-400 animate-pulse' : ping < 150 ? 'bg-amber-400' : 'bg-rose-400'}`} />
+              <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${ping < 80 ? 'bg-emerald-400 animate-pulse' : ping < 150 ? 'bg-amber-400' : 'bg-rose-400'}`} />
               <span className={ping < 80 ? 'text-emerald-400 font-bold' : ping < 150 ? 'text-amber-400 font-bold' : 'text-rose-400 font-bold'}>
                 {ping}ms
               </span>
             </div>
 
-            {/* Dynamic Weather Ambient Status (Auto-cycles in background) */}
+            {/* Dynamic Weather Ambient Status */}
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 text-xs font-mono shadow-sm select-none"
+              className={`flex items-center gap-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-mono shadow-sm select-none ${
+                isShortLandscape ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs'
+              }`}
               title={`Thời tiết chiến trường: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}`}
             >
-              <span className="text-sm">{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
-              <span className="text-slate-200 font-bold hidden md:inline">
+              <span className="text-xs sm:text-sm">{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
+              <span className="text-slate-200 font-bold hidden lg:inline">
                 {WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}
               </span>
             </div>
           </div>
 
           {/* Right: Loa, Âm thanh, Gara xe, Help, Đổi xe, Khán giả, Thoát, Ẩn thanh */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             {/* Quick Aim Mode Toggle: Movement Direction (Tank 1990) vs Mouse 360° */}
             <button
               type="button"
@@ -1289,99 +1360,107 @@ export default function App() {
                   themeColor: nextMode === 'MOVEMENT' ? '#10b981' : '#38bdf8',
                 });
               }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+              className={`flex items-center gap-1 font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
+              } ${
                 aimMode === 'MOVEMENT'
                   ? 'bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 border-emerald-500/60'
                   : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border-sky-500/40'
               }`}
               title="Đổi chế độ ngắm bắn: Theo hướng di chuyển (Tank 1990) / Theo chuột 360° (Phím tắt C)"
             >
-              <Target className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden xl:inline">{aimMode === 'MOVEMENT' ? 'Bắn Hướng Xe (Tank 1990)' : 'Bắn Theo Chuột 360°'}</span>
-              <span className="xl:hidden">{aimMode === 'MOVEMENT' ? 'Hướng Xe' : 'Chuột'}</span>
-              <kbd className="px-1 py-0.2 bg-slate-900/90 border border-slate-700 rounded text-[9px] text-amber-300 font-mono">C</kbd>
+              <Target className="w-3 h-3 text-emerald-400" />
+              <span className="hidden xl:inline">{aimMode === 'MOVEMENT' ? 'Bắn Hướng Xe' : 'Bắn Chuột 360°'}</span>
+              <span className="xl:hidden">{aimMode === 'MOVEMENT' ? 'Hướng' : 'Chuột'}</span>
+              {!isShortLandscape && (
+                <kbd className="px-1 py-0.2 bg-slate-900/90 border border-slate-700 rounded text-[9px] text-amber-300 font-mono">C</kbd>
+              )}
             </button>
 
             {/* Gara Tùy Biến Xe Tăng & Skin Ngoại Trang */}
             <button
               onClick={() => setIsGarageOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-fuchsia-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-fuchsia-500/50 hover:border-fuchsia-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
-              title="Gara Tùy Biến Xe Tăng & Skin Ngoại Trang (Garage Workshop)"
+              className={`flex items-center gap-1 font-bold text-fuchsia-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-fuchsia-500/50 hover:border-fuchsia-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
+              }`}
+              title="Gara Tùy Biến Xe Tăng & Skin Ngoại Trang"
             >
-              <Palette className="w-3.5 h-3.5 text-fuchsia-400" />
-              <span>Gara Xe</span>
-            </button>
-
-            {/* Cài đặt Âm thanh & Phát thanh viên */}
-            <button
-              onClick={() => setIsAudioSettingsOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
-              title="Tùy chỉnh Nhạc nền & Giọng phát thanh viên"
-            >
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Âm Thanh</span>
+              <Palette className="w-3 h-3 text-fuchsia-400" />
+              <span>Gara</span>
             </button>
 
             {/* Quick Mute Loa */}
             <button
               onClick={handleToggleMute}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm"
+              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
+                isShortLandscape ? 'p-1' : 'p-2'
+              }`}
               title={isMuted ? 'Bật âm thanh (Loa)' : 'Tắt âm thanh (Loa)'}
             >
-              {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-sky-400" />}
+              {isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-sky-400" />}
             </button>
 
             {/* Help */}
             <button
               onClick={() => setIsControlsModalOpen(true)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm"
+              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
+                isShortLandscape ? 'p-1' : 'p-2'
+              }`}
               title="Hướng dẫn & Phím tắt (Help)"
             >
-              <HelpCircle className="w-4 h-4 text-sky-400" />
+              <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
             </button>
 
             {/* Đổi xe */}
             <button
               onClick={() => setIsInGame(false)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              className={`flex items-center gap-1 font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
+              }`}
               title="Đổi loại xe tăng hoặc đổi chế độ"
             >
-              <Shield className="w-3.5 h-3.5 text-amber-400" />
+              <Shield className="w-3 h-3 text-amber-400" />
               <span>Đổi Xe</span>
             </button>
 
             {/* Chuyển đổi Khán Giả / Tham Chiến */}
             <button
               onClick={() => handleToggleSpectator()}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+              className={`flex items-center gap-1 font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
+                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
+              } ${
                 isSpectator
                   ? 'bg-sky-600 hover:bg-sky-500 text-white border-sky-400 shadow-sky-600/30'
                   : 'bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border-sky-500/40'
               }`}
               title={isSpectator ? 'Tham gia chiến đấu ngay' : 'Chuyển sang chế độ khán giả xem trận'}
             >
-              {isSpectator ? <Swords className="w-3.5 h-3.5 text-white" /> : <Eye className="w-3.5 h-3.5 text-sky-400" />}
-              <span>{isSpectator ? 'Vào Chiến Đấu' : 'Xem Trận'}</span>
+              {isSpectator ? <Swords className="w-3 h-3 text-white" /> : <Eye className="w-3 h-3 text-sky-400" />}
+              <span>{isSpectator ? 'Vào Đấu' : 'Xem Trận'}</span>
             </button>
 
             {/* Thoát Game / Rời Trận */}
             <button
               onClick={handleExitGame}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/50 hover:border-rose-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+              className={`flex items-center gap-1 font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/50 hover:border-rose-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                isShortLandscape ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'
+              }`}
               title="Thoát trận đấu và quay về sảnh chờ"
             >
-              <LogOut className="w-3.5 h-3.5 text-rose-400" />
-              <span>Thoát Game</span>
+              <LogOut className="w-3 h-3 text-rose-400" />
+              <span>{isShortLandscape ? 'Thoát' : 'Thoát Game'}</span>
             </button>
 
             {/* Ẩn thanh */}
             <button
               onClick={() => setShowTopBar(false)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition-colors cursor-pointer border border-slate-700/70 shadow-sm"
+              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
+                isShortLandscape ? 'p-1' : 'px-2.5 py-1.5 text-xs flex items-center gap-1'
+              }`}
               title="Ẩn thanh công cụ (Phím U)"
             >
               <ChevronUp className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden md:inline">Ẩn Thanh (U)</span>
+              {!isShortLandscape && <span className="hidden md:inline">Ẩn Thanh (U)</span>}
             </button>
           </div>
         </header>
@@ -1399,7 +1478,7 @@ export default function App() {
             <span>Hiện Thanh DLAND TANK (U)</span>
           </button>
           <div className="bg-slate-900/90 border border-slate-700/80 text-sky-300 px-2.5 py-1 rounded-full text-[11px] font-mono shadow-xl backdrop-blur-md">
-            Zoom {Math.round(zoomScale * 100)}%
+            Zoom {Math.round(effectiveZoomScale * 100)}%
           </div>
 
           <div
@@ -1455,7 +1534,7 @@ export default function App() {
           landmines={landmines}
           worldSize={worldSize}
           is25DMode={is25DMode}
-          zoomScale={zoomScale}
+          zoomScale={effectiveZoomScale}
           isSpectator={isSpectator}
           spectatorTargetId={spectatorTargetId}
           freeCameraPos={freeCameraPos}
@@ -1487,43 +1566,47 @@ export default function App() {
 
         {/* Top-Center Dedicated Game Mode Tactical Status Widget */}
         {isInGame && (
-          <div className="absolute top-2.5 sm:top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex flex-col items-center gap-1.5 max-w-xl w-[94%] sm:w-auto">
+          <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex flex-col items-center gap-1 max-w-xl w-[94%] sm:w-auto ${
+            isShortLandscape ? 'top-1' : 'top-2.5 sm:top-3'
+          }`}>
             {/* 1. BATTLE ROYALE MODE HUD */}
             {(gameMode === 'BATTLE_ROYALE' || (storm && storm.active)) && (
               <div className="flex flex-col items-center gap-1">
-                <div className="bg-slate-950/92 border border-purple-500/70 shadow-2xl shadow-purple-500/20 backdrop-blur-md px-3.5 py-1.5 rounded-2xl flex items-center gap-2.5 sm:gap-3.5 text-xs">
-                  <div className="flex items-center gap-1.5 text-purple-300 font-mono font-black tracking-tight whitespace-nowrap">
-                    <Zap className="w-4 h-4 text-purple-400 animate-pulse" />
-                    <span>BO GIAI ĐOẠN {storm?.phase || 1}</span>
+                <div className={`bg-slate-950/92 border border-purple-500/70 shadow-2xl shadow-purple-500/20 backdrop-blur-md rounded-2xl flex items-center ${
+                  isShortLandscape ? 'px-2 py-0.5 gap-2 text-[10px]' : 'px-3.5 py-1.5 gap-2.5 sm:gap-3.5 text-xs'
+                }`}>
+                  <div className="flex items-center gap-1 text-purple-300 font-mono font-black tracking-tight whitespace-nowrap">
+                    <Zap className={`${isShortLandscape ? 'w-3 h-3' : 'w-4 h-4'} text-purple-400 animate-pulse`} />
+                    <span>BO G.Đ {storm?.phase || 1}</span>
                   </div>
 
-                  <div className="h-4 w-px bg-slate-800" />
+                  <div className="h-3 w-px bg-slate-800" />
 
                   {storm?.isShrinking ? (
                     <div className="text-amber-300 font-bold flex items-center gap-1 animate-pulse whitespace-nowrap">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                      <span>ĐANG THU HẸP! ({Math.round(storm.currentRadius)}m)</span>
+                      <AlertTriangle className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-amber-400`} />
+                      <span>THU HẸP! ({Math.round(storm.currentRadius)}m)</span>
                     </div>
                   ) : (
                     <div className="text-sky-300 font-mono whitespace-nowrap">
-                      <span>Co bo: </span>
+                      <span>Co: </span>
                       <strong className="text-white font-bold">{Math.round(storm?.phaseTimeLeft || 60)}s</strong>
-                      <span className="text-slate-400 text-[10px] ml-1">({Math.round(storm?.currentRadius || 2400)}m)</span>
+                      <span className="text-slate-400 text-[9px] ml-0.5">({Math.round(storm?.currentRadius || 2400)}m)</span>
                     </div>
                   )}
 
-                  <div className="h-4 w-px bg-slate-800" />
+                  <div className="h-3 w-px bg-slate-800" />
 
                   <div className="flex items-center gap-1 text-emerald-300 font-mono font-bold whitespace-nowrap">
-                    <Users className="w-3.5 h-3.5 text-emerald-400" />
+                    <Users className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-emerald-400`} />
                     <span>{aliveCount || tanks.filter((t) => !t.isDead).length}/{totalParticipants || tanks.length} Xe</span>
                   </div>
                 </div>
 
                 {myTank?.inStorm && !myTank.isDead && (
-                  <div className="bg-rose-950/95 border border-rose-500 text-rose-200 px-3.5 py-1 rounded-full text-xs font-black animate-bounce shadow-xl flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-400" />
-                    <span>⚠️ BẠN ĐANG NGOÀI VÒNG BO! RÚT MÁU (-{Math.round(storm?.dps || 5)} HP/s)!</span>
+                  <div className="bg-rose-950/95 border border-rose-500 text-rose-200 px-2.5 py-0.5 rounded-full text-[10px] font-black animate-bounce shadow-xl flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 text-rose-400" />
+                    <span>⚠️ NGOÀI VÒNG BO (-{Math.round(storm?.dps || 5)} HP/s)!</span>
                   </div>
                 )}
               </div>
@@ -1532,23 +1615,25 @@ export default function App() {
             {/* 2. TEAM DEATHMATCH MODE HUD */}
             {gameMode === 'TEAM_DEATHMATCH' && teamScore && (
               <div className="flex flex-col items-center gap-1">
-                <div className="bg-slate-950/92 border border-slate-700/80 shadow-2xl backdrop-blur-md px-4 py-2 rounded-2xl flex flex-col items-center gap-1.5 min-w-[290px] sm:min-w-[360px]">
-                  <div className="w-full flex items-center justify-between font-mono text-xs font-black">
-                    <div className="flex items-center gap-1.5 text-rose-400">
-                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
-                      <span>ĐỘI ĐỎ: {teamScore.red}</span>
+                <div className={`bg-slate-950/92 border border-slate-700/80 shadow-2xl backdrop-blur-md rounded-2xl flex flex-col items-center ${
+                  isShortLandscape ? 'px-2.5 py-1 min-w-[230px] gap-1 text-[10px]' : 'px-4 py-2 min-w-[290px] sm:min-w-[360px] gap-1.5 text-xs'
+                }`}>
+                  <div className="w-full flex items-center justify-between font-mono font-black">
+                    <div className="flex items-center gap-1 text-rose-400">
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                      <span>ĐỎ: {teamScore.red}</span>
                     </div>
-                    <span className="text-[10px] text-slate-400 font-bold px-2 py-0.5 rounded bg-slate-800 border border-slate-700/60">
-                      ĐÍCH: 30 KILLS
+                    <span className="text-[9px] text-slate-400 font-bold px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700/60">
+                      30 KILLS
                     </span>
-                    <div className="flex items-center gap-1.5 text-sky-400">
-                      <span>ĐỘI XANH: {teamScore.blue}</span>
-                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-pulse" />
+                    <div className="flex items-center gap-1 text-sky-400">
+                      <span>XANH: {teamScore.blue}</span>
+                      <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
                     </div>
                   </div>
 
                   {/* Dual tug-of-war bar towards 30 kills */}
-                  <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
+                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
                     <div
                       className="h-full bg-rose-600 transition-all duration-300"
                       style={{ width: `${Math.min(50, (teamScore.red / 30) * 50)}%` }}
@@ -1561,55 +1646,44 @@ export default function App() {
                   </div>
 
                   {myTank?.inHealingBase && (
-                    <div className="text-[11px] text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
-                      <span>💚 Đang hồi máu trong căn cứ (+10 HP/s & Giáp)</span>
+                    <div className="text-[10px] text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
+                      <span>💚 Hồi máu trong căn cứ (+10 HP/s)</span>
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {/* 3. BOSS RAID MODE HUD (Or when World Boss Leviathan is active in Public) */}
+            {/* 3. BOSS RAID MODE HUD */}
             {(gameMode === 'BOSS_RAID' || (boss && boss.isAlive)) && (
               <div className="flex flex-col items-center gap-1">
                 {boss && boss.isAlive ? (
-                  <div className="bg-slate-950/95 border-2 border-amber-500/80 shadow-2xl shadow-amber-500/20 backdrop-blur-md px-4 py-2 rounded-2xl flex flex-col items-center gap-1.5 min-w-[300px] sm:min-w-[420px]">
-                    <div className="w-full flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1.5 text-amber-400 font-mono font-black">
-                        <Skull className="w-4 h-4 text-amber-400 animate-bounce" />
-                        <span>SIÊU BOSS LEVIATHAN (CẤP THẾ GIỚI)</span>
+                  <div className={`bg-slate-950/95 border border-amber-500/80 shadow-2xl shadow-amber-500/20 backdrop-blur-md rounded-2xl flex flex-col items-center ${
+                    isShortLandscape ? 'px-2.5 py-1 min-w-[240px] gap-1 text-[10px]' : 'px-4 py-2 min-w-[300px] sm:min-w-[420px] gap-1.5 text-xs'
+                  }`}>
+                    <div className="w-full flex items-center justify-between">
+                      <div className="flex items-center gap-1 text-amber-400 font-mono font-black">
+                        <Skull className={`${isShortLandscape ? 'w-3 h-3' : 'w-4 h-4'} text-amber-400 animate-bounce`} />
+                        <span>BOSS LEVIATHAN</span>
                       </div>
-                      <span className="text-[11px] font-mono text-emerald-400 font-bold">
+                      <span className="font-mono text-emerald-400 font-bold">
                         {Math.ceil(boss.hp)} / {boss.maxHp} HP
                       </span>
                     </div>
 
                     {/* Boss HP Bar */}
-                    <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden border border-amber-500/40 p-0.5">
+                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-amber-500/40 p-0.5">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-red-600 via-amber-500 to-emerald-400 transition-all duration-150"
                         style={{ width: `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%` }}
                       />
                     </div>
-
-                    {boss.shield > 0 && (
-                      <div className="w-full flex items-center justify-between text-[10px] text-cyan-300 font-mono">
-                        <span>🛡️ GIÁP NĂNG LƯỢNG:</span>
-                        <span>{Math.ceil(boss.shield)} / 250</span>
-                      </div>
-                    )}
-
-                    <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                      <span>📍 Pháo Đài Trung Tâm</span>
-                      <span>•</span>
-                      <span className="text-amber-300 font-semibold">Cẩn thận đạn pháo 4 nòng & Sóng xung kích EMP!</span>
-                    </div>
                   </div>
                 ) : (
-                  <div className="bg-slate-950/90 border border-amber-500/40 px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-2 text-amber-300 shadow-lg">
-                    <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div className="bg-slate-950/90 border border-amber-500/40 px-2.5 py-1 rounded-xl text-[10px] sm:text-xs flex items-center gap-1.5 text-amber-300 shadow-lg">
+                    <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                     <span>
-                      Boss Leviathan hồi sinh sau: <strong className="text-white font-mono">{Math.round(boss?.respawnTimeLeft || 0)}s</strong>. Nhặt 4 rương báu tại trung tâm!
+                      Boss hồi sinh: <strong className="text-white font-mono">{Math.round(boss?.respawnTimeLeft || 0)}s</strong>
                     </span>
                   </div>
                 )}
@@ -1806,12 +1880,43 @@ export default function App() {
             </div>
 
             {/* BOTTOM-LEFT: Tank Stats Gauge with Show/Hide + In-Game Chat */}
-            <div className="absolute bottom-4 left-4 z-20 flex flex-col gap-3 pointer-events-none">
+            <div className={`z-20 flex flex-col gap-1.5 pointer-events-none ${
+              isShortLandscape ? 'absolute top-11 left-3' : 'absolute bottom-4 left-4 gap-3'
+            }`}>
               {/* Player Tank Health & Shield Gauge with Hide/Show */}
               {myTank && (
                 <>
                   {showStats ? (
-                    <div className="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md w-72 pointer-events-auto select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
+                    isShortLandscape ? (
+                      <div className="bg-slate-900/95 border border-slate-700/80 rounded-xl px-2.5 py-1 shadow-xl backdrop-blur-md pointer-events-auto select-none flex items-center gap-2 text-xs font-mono">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            myTank.isDead
+                              ? 'bg-rose-500'
+                              : myTank.hp < myTank.maxHp * 0.3
+                              ? 'bg-rose-500 animate-pulse'
+                              : myTank.shield > 0
+                              ? 'bg-sky-400 animate-pulse'
+                              : 'bg-emerald-500'
+                          }`}
+                        />
+                        <span className="font-bold text-white whitespace-nowrap">
+                          HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}
+                        </span>
+                        <span className="text-slate-600">|</span>
+                        <span className="text-emerald-400 font-bold whitespace-nowrap">⚔️ {myTank.kills}</span>
+                        <span className="text-slate-600">|</span>
+                        <span className="text-amber-400 font-bold whitespace-nowrap">🔥 {myTank.streak}</span>
+                        <button
+                          onClick={() => setShowStats(false)}
+                          className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer ml-1"
+                          title="Ẩn status"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md w-72 pointer-events-auto select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
                       {/* Header with Tactical Status Badge & Hide Button */}
                       <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                         <div className="flex items-center gap-1.5 text-xs font-bold">
@@ -1956,7 +2061,8 @@ export default function App() {
                         <span>Chuỗi: <strong className="text-amber-400">{myTank.streak}🔥</strong></span>
                       </div>
                     </div>
-                  ) : (
+                  )
+                ) : (
                     <button
                       onClick={() => setShowStats(true)}
                       className="pointer-events-auto flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/50 text-emerald-300 px-3 py-1.5 rounded-xl shadow-xl text-xs backdrop-blur-md cursor-pointer transition-all self-start active:scale-95"
@@ -1986,7 +2092,9 @@ export default function App() {
             </div>
 
             {/* BOTTOM-CENTER: Tactical Skill Bar HUD (Shift: Boost, Space: Shield, E: Mine, R: Barrage) */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <div className={`absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in duration-200 ${
+              isShortLandscape ? 'bottom-1 scale-75 sm:scale-85 origin-bottom' : 'bottom-4 slide-in-from-bottom-3'
+            }`}>
               <SkillBarHUD myTank={myTank} onUseSkill={handleUseSkill} />
             </div>
 

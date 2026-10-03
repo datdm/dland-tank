@@ -34,8 +34,22 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
   bases = [],
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isShortLandscape, setIsShortLandscape] = useState(() => typeof window !== 'undefined' && window.innerHeight <= 540);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsShortLandscape(window.innerHeight <= 540);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const isLarge = mode === 'large';
-  const size = isLarge ? 460 : 160;
+  const size = isLarge
+    ? Math.min(460, Math.floor(typeof window !== 'undefined' ? window.innerHeight * 0.8 : 360))
+    : isShortLandscape
+    ? 110
+    : 160;
   const [isDragging, setIsDragging] = useState(false);
 
   const myTank = tanks.find((t) => t.id === myPlayerId);
@@ -450,19 +464,22 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
 
   // If Map Nhỏ: Render as Compact Widget in Top-Left
   return (
-    <div className="border border-sky-500/40 rounded-xl overflow-hidden shadow-2xl backdrop-blur-md bg-slate-950/95 transition-all duration-200 w-[160px] select-none">
+    <div
+      className="border border-sky-500/40 rounded-xl overflow-hidden shadow-2xl backdrop-blur-md bg-slate-950/95 transition-all duration-200 select-none"
+      style={{ width: size }}
+    >
       {/* Sleek Compact Header Bar */}
-      <div className="flex items-center justify-between px-2 py-1 bg-slate-900/90 border-b border-sky-500/30 text-[10px] font-mono">
-        <div className="flex items-center gap-1.5 text-sky-400 font-bold">
+      <div className={`flex items-center justify-between ${isShortLandscape ? 'px-1.5 py-0.5' : 'px-2 py-1'} bg-slate-900/90 border-b border-sky-500/30 text-[9px] sm:text-[10px] font-mono`}>
+        <div className="flex items-center gap-1 text-sky-400 font-bold">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>RADAR</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           {/* Maximize to Center Dialog Button */}
           <button
             onClick={() => onSetMode('large')}
-            className="flex items-center gap-0.5 bg-slate-800 hover:bg-sky-950 border border-slate-700/80 hover:border-sky-500/50 text-slate-300 hover:text-sky-300 px-1 py-0.2 rounded text-[9px] font-bold transition-all cursor-pointer"
+            className="flex items-center gap-0.5 bg-slate-800 hover:bg-sky-950 border border-slate-700/80 hover:border-sky-500/50 text-slate-300 hover:text-sky-300 px-1 py-0.2 rounded text-[8px] sm:text-[9px] font-bold transition-all cursor-pointer"
             title="Mở Map To chính giữa màn hình (Phím M)"
           >
             <span>To</span>
@@ -483,13 +500,14 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
       {/* Flush Edge-to-Edge Canvas */}
       <canvas
         ref={canvasRef}
-        width={160}
-        height={160}
+        width={size}
+        height={size}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className="block cursor-crosshair active:cursor-grabbing select-none w-[160px] h-[160px]"
+        className="block cursor-crosshair active:cursor-grabbing select-none"
+        style={{ width: size, height: size }}
       />
     </div>
   );

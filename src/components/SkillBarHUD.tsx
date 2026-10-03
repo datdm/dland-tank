@@ -209,6 +209,13 @@ export const SkillBarHUD: React.FC<SkillBarHUDProps> = ({ myTank, onUseSkill }) 
               {/* Skill Button */}
               <button
                 type="button"
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  if (isReady) {
+                    onUseSkill(sk.id);
+                    sounds.playPowerUp();
+                  }
+                }}
                 onClick={() => {
                   if (isReady) {
                     onUseSkill(sk.id);
