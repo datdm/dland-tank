@@ -30,108 +30,137 @@ export const HelpModal: React.FC<HelpModalProps> = ({
   initialTab = 'controls',
 }) => {
   const [activeTab, setActiveTab] = useState<'controls' | 'skills' | 'tanks' | 'items' | 'ammo'>(initialTab);
+  const [isShortLandscape, setIsShortLandscape] = useState(
+    () => typeof window !== 'undefined' && (window.innerHeight <= 620 || (window.innerWidth < 768 && window.innerHeight > window.innerWidth))
+  );
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsShortLandscape(window.innerHeight <= 620 || (window.innerWidth < 768 && window.innerHeight > window.innerWidth));
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
-      <div className="bg-slate-900 border border-slate-700/90 rounded-2xl max-w-2xl w-full p-4 sm:p-6 text-white shadow-2xl my-auto space-y-4 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-md flex items-center justify-center p-1.5 sm:p-4 overflow-y-auto animate-in fade-in zoom-in-95 duration-200 select-none">
+      <div className={`relative bg-slate-900 border border-slate-700/90 rounded-xl sm:rounded-2xl md:rounded-3xl max-w-2xl md:max-w-3xl lg:max-w-4xl w-full text-white shadow-2xl my-auto flex flex-col overflow-hidden ${
+        isShortLandscape ? 'max-h-[94dvh] h-[92vh]' : 'max-h-[88vh]'
+      }`}>
         {/* Modal Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-sky-500/20 text-sky-400 border border-sky-500/30">
-              <HelpCircle className="w-5 h-5" />
+        <div className={`flex items-center justify-between border-b border-slate-800 shrink-0 ${isShortLandscape ? 'pb-1.5' : 'pb-3 md:pb-4'}`}>
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className={`${isShortLandscape ? 'p-1' : 'p-1.5 md:p-2'} rounded-lg md:rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30`}>
+              <HelpCircle className={isShortLandscape ? 'w-4 h-4' : 'w-5 h-5 md:w-6 md:h-6'} />
             </div>
             <div>
-              <h3 className="font-extrabold text-base sm:text-lg text-white font-mono">
+              <h3 className={`font-extrabold text-white font-mono ${isShortLandscape ? 'text-xs' : 'text-base sm:text-lg md:text-xl'}`}>
                 CẨM NANG & HƯỚNG DẪN DLAND TANK
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Thông tin kỹ năng chiến đấu, phím tắt, 3 lớp xe tăng, linh kiện tiếp tế và 8 loại đạn
-              </p>
+              {!isShortLandscape && (
+                <p className="text-[11px] md:text-xs text-slate-400">
+                  Thông tin kỹ năng chiến đấu, phím tắt, 3 lớp xe tăng, linh kiện tiếp tế và 8 loại đạn
+                </p>
+              )}
             </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+            className="text-slate-400 hover:text-white p-1 md:p-1.5 rounded-lg md:rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
             title="Đóng cửa sổ (Escape)"
           >
-            <X className="w-5 h-5" />
+            <X className={isShortLandscape ? 'w-4 h-4' : 'w-5 h-5 md:w-6 md:h-6'} />
           </button>
         </div>
 
         {/* Category Tabs */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 bg-slate-950 p-1.5 rounded-xl border border-slate-800 shrink-0">
+        <div className={`grid grid-cols-5 gap-1 md:gap-1.5 bg-slate-950 rounded-xl md:rounded-2xl border border-slate-800 shrink-0 ${isShortLandscape ? 'p-0.5' : 'p-1 sm:p-1.5 md:p-2'}`}>
           <button
             type="button"
             onClick={() => setActiveTab('controls')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`rounded-lg md:rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1 md:gap-1.5 ${
+              isShortLandscape ? 'py-0.5 px-0.5 text-[8.5px]' : 'py-1.5 sm:py-2 md:py-2.5 px-1 sm:px-2 md:px-3 text-[10px] sm:text-xs md:text-sm'
+            } ${
               activeTab === 'controls'
                 ? 'bg-sky-500 text-slate-950 shadow-md font-extrabold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
-            <Keyboard className="w-3.5 h-3.5" />
-            <span>Phím Tắt</span>
+            <Keyboard className={isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4'} />
+            <span className="truncate">Phím Tắt</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('skills')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`rounded-lg md:rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1 md:gap-1.5 ${
+              isShortLandscape ? 'py-0.5 px-0.5 text-[8.5px]' : 'py-1.5 sm:py-2 md:py-2.5 px-1 sm:px-2 md:px-3 text-[10px] sm:text-xs md:text-sm'
+            } ${
               activeTab === 'skills'
                 ? 'bg-cyan-400 text-slate-950 shadow-md font-extrabold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
-            <Zap className="w-3.5 h-3.5" />
-            <span>4 Kỹ Năng</span>
+            <Zap className={isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4'} />
+            <span className="truncate">4 Kỹ Năng</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('tanks')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`rounded-lg md:rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1 md:gap-1.5 ${
+              isShortLandscape ? 'py-0.5 px-0.5 text-[8.5px]' : 'py-1.5 sm:py-2 md:py-2.5 px-1 sm:px-2 md:px-3 text-[10px] sm:text-xs md:text-sm'
+            } ${
               activeTab === 'tanks'
                 ? 'bg-amber-500 text-slate-950 shadow-md font-extrabold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
-            <Shield className="w-3.5 h-3.5" />
-            <span>3 Lớp Xe</span>
+            <Shield className={isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4'} />
+            <span className="truncate">3 Lớp Xe</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('items')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`rounded-lg md:rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1 md:gap-1.5 ${
+              isShortLandscape ? 'py-0.5 px-0.5 text-[8.5px]' : 'py-1.5 sm:py-2 md:py-2.5 px-1 sm:px-2 md:px-3 text-[10px] sm:text-xs md:text-sm'
+            } ${
               activeTab === 'items'
                 ? 'bg-emerald-500 text-slate-950 shadow-md font-extrabold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
-            <Package className="w-3.5 h-3.5" />
-            <span>Linh Kiện</span>
+            <Package className={isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4'} />
+            <span className="truncate">Linh Kiện</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('ammo')}
-            className={`py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            className={`rounded-lg md:rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center gap-0.5 sm:gap-1 md:gap-1.5 ${
+              isShortLandscape ? 'py-0.5 px-0.5 text-[8.5px]' : 'py-1.5 sm:py-2 md:py-2.5 px-1 sm:px-2 md:px-3 text-[10px] sm:text-xs md:text-sm'
+            } ${
               activeTab === 'ammo'
                 ? 'bg-rose-500 text-slate-950 shadow-md font-extrabold'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
-            <Crosshair className="w-3.5 h-3.5" />
-            <span>8 Loại Đạn</span>
+            <Crosshair className={isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4'} />
+            <span className="truncate">8 Loại Đạn</span>
           </button>
         </div>
 
         {/* Tab Contents (Scrollable Area) */}
-        <div className="flex-1 overflow-y-auto pr-1 space-y-3.5 text-xs text-slate-300">
+        <div className="flex-1 overflow-y-auto pr-1 space-y-3.5 md:space-y-4 text-xs md:text-sm text-slate-300">
           {/* TAB 1: CONTROLS & HOTKEYS */}
           {activeTab === 'controls' && (
             <div className="space-y-3">
@@ -499,11 +528,13 @@ export const HelpModal: React.FC<HelpModalProps> = ({
         </div>
 
         {/* Footer Button */}
-        <div className="pt-2 border-t border-slate-800 shrink-0">
+        <div className={`${isShortLandscape ? 'pt-1.5' : 'pt-2'} border-t border-slate-800 shrink-0`}>
           <button
             type="button"
             onClick={onClose}
-            className="w-full py-3 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl transition-all cursor-pointer text-xs uppercase tracking-wider"
+            className={`w-full ${
+              isShortLandscape ? 'py-1.5 text-[10.5px]' : 'py-3 text-xs'
+            } bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl transition-all cursor-pointer uppercase tracking-wider`}
           >
             ĐÃ HIỂU & QUAY LẠI
           </button>

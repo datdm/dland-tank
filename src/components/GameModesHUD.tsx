@@ -23,6 +23,22 @@ export const GameModesHUD: React.FC<GameModesHUDProps> = ({
   brWinner,
   myTank,
 }) => {
+  const [isShortLandscape, setIsShortLandscape] = React.useState(
+    () => typeof window !== 'undefined' && window.innerHeight <= 620 && window.innerWidth > window.innerHeight
+  );
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsShortLandscape(window.innerHeight <= 620 && window.innerWidth > window.innerHeight);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
   if (!mode || mode === 'AI') return null;
 
   return (
@@ -77,27 +93,29 @@ export const GameModesHUD: React.FC<GameModesHUDProps> = ({
 
           {/* Winner Winner Chicken Dinner Modal */}
           {brWinner && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in zoom-in-90 duration-300">
-              <div className="max-w-md w-full bg-slate-900 border-2 border-amber-500/80 rounded-3xl p-6 sm:p-8 text-center shadow-2xl relative overflow-hidden space-y-4">
-                <div className="text-5xl animate-bounce">👑</div>
-                <div className="inline-block px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-mono font-black text-xs tracking-widest uppercase">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in zoom-in-90 duration-300 pointer-events-auto">
+              <div className={`max-w-xs sm:max-w-md w-full bg-slate-900 border-2 border-amber-500/80 rounded-2xl sm:rounded-3xl ${
+                isShortLandscape ? 'p-3 space-y-1.5' : 'p-6 sm:p-8 space-y-3'
+              } text-center shadow-2xl relative overflow-hidden`}>
+                <div className={`${isShortLandscape ? 'text-2xl' : 'text-4xl sm:text-5xl'} animate-bounce`}>👑</div>
+                <div className={`inline-block ${isShortLandscape ? 'px-2 py-0.2 text-[9px]' : 'px-3 py-1 text-xs'} rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-mono font-black tracking-widest uppercase`}>
                   BATTLE ROYALE CHAMPION
                 </div>
-                <h2 className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-orange-300 to-yellow-200 font-mono">
+                <h2 className={`${isShortLandscape ? 'text-base' : 'text-xl sm:text-3xl'} font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-orange-300 to-yellow-200 font-mono`}>
                   WINNER WINNER CHICKEN DINNER!
                 </h2>
-                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1">
-                  <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">
-                    CHIẾN THẦN SỐNG SÓT DUY NHẤT:
+                <div className={`${isShortLandscape ? 'p-2 space-y-0.5' : 'p-3 sm:p-4 space-y-1'} rounded-xl bg-slate-950/70 border border-slate-800`}>
+                  <div className={`${isShortLandscape ? 'text-[9.5px]' : 'text-xs'} text-slate-400 uppercase font-bold tracking-wider`}>
+                    CHIẾN THẦN SỐNG SÓT:
                   </div>
-                  <div className="text-xl font-black text-white" style={{ color: brWinner.color }}>
+                  <div className={`${isShortLandscape ? 'text-sm' : 'text-lg sm:text-xl'} font-black text-white`} style={{ color: brWinner.color }}>
                     {brWinner.name}
                   </div>
-                  <div className="text-xs font-mono text-emerald-400 font-bold">
+                  <div className={`${isShortLandscape ? 'text-[10px]' : 'text-xs'} font-mono text-emerald-400 font-bold`}>
                     Tổng hạ gục: {brWinner.kills} Kills
                   </div>
                 </div>
-                <p className="text-xs text-slate-400 font-mono animate-pulse">
+                <p className={`${isShortLandscape ? 'text-[9px]' : 'text-xs'} text-slate-400 font-mono animate-pulse`}>
                   Trận đấu sinh tồn mới sẽ tự động bắt đầu sau ít giây...
                 </p>
               </div>
@@ -160,20 +178,22 @@ export const GameModesHUD: React.FC<GameModesHUDProps> = ({
 
           {/* TDM Victory Banner */}
           {teamScore.winner && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in zoom-in-90 duration-300">
-              <div className="max-w-md w-full bg-slate-900 border-2 rounded-3xl p-6 sm:p-8 text-center shadow-2xl relative overflow-hidden space-y-4"
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-md animate-in zoom-in-90 duration-300 pointer-events-auto">
+              <div className={`max-w-xs sm:max-w-md w-full bg-slate-900 border-2 rounded-2xl sm:rounded-3xl ${
+                isShortLandscape ? 'p-3 space-y-1.5' : 'p-6 sm:p-8 space-y-3'
+              } text-center shadow-2xl relative overflow-hidden`}
                 style={{ borderColor: teamScore.winner === 'RED' ? '#ef4444' : '#3b82f6' }}
               >
-                <div className="text-5xl animate-bounce">🏆</div>
-                <h2 className="text-2xl sm:text-3xl font-black font-mono"
+                <div className={`${isShortLandscape ? 'text-2xl' : 'text-4xl sm:text-5xl'} animate-bounce`}>🏆</div>
+                <h2 className={`${isShortLandscape ? 'text-base' : 'text-xl sm:text-3xl'} font-black font-mono`}
                   style={{ color: teamScore.winner === 'RED' ? '#ef4444' : '#38bdf8' }}
                 >
                   {teamScore.winner === 'RED' ? 'ĐỘI ĐỎ CHIẾN THẮNG!' : 'ĐỘI XANH CHIẾN THẮNG!'}
                 </h2>
-                <p className="text-sm text-slate-300 font-medium">
+                <p className={`${isShortLandscape ? 'text-[10px]' : 'text-xs sm:text-sm'} text-slate-300 font-medium`}>
                   Đã xuất sắc đạt cột mốc <strong className="text-amber-400">30 Kills</strong> đầu tiên trên chiến trường!
                 </p>
-                <div className="text-xs text-slate-400 font-mono animate-pulse">
+                <div className={`${isShortLandscape ? 'text-[9px]' : 'text-xs'} text-slate-400 font-mono animate-pulse`}>
                   Trận đấu mới sẽ bắt đầu sau ít giây...
                 </div>
               </div>

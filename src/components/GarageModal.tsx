@@ -8,7 +8,9 @@ import {
   RoofDecalId,
   ROOF_DECALS,
 } from '../types/game';
+import { DecalBadge } from './DecalBadge';
 import { sounds } from '../utils/audio';
+import { haptics } from '../utils/haptics';
 import {
   X,
   Palette,
@@ -18,9 +20,6 @@ import {
   Check,
   RotateCw,
   Flame,
-  Zap,
-  Shield,
-  Layers,
 } from 'lucide-react';
 
 interface GarageModalProps {
@@ -52,10 +51,36 @@ export const GarageModal: React.FC<GarageModalProps> = ({
   const [selectedSkin, setSelectedSkin] = useState<TankSkinId>(currentSkin || 'DEFAULT');
   const [selectedTrail, setSelectedTrail] = useState<BulletTrailId>(currentTrail || 'STANDARD');
   const [selectedDecal, setSelectedDecal] = useState<RoofDecalId>(currentDecal || 'NONE');
+  const [isSavedRecently, setIsSavedRecently] = useState<boolean>(false);
 
   const [turretRotation, setTurretRotation] = useState<number>(0);
   const [isAutoRotate, setIsAutoRotate] = useState<boolean>(true);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Accurate responsive dimensions detection for mobile screens
+  const [dimensions, setDimensions] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 800,
+    height: typeof window !== 'undefined' ? window.innerHeight : 600,
+  }));
+
+  useEffect(() => {
+    const handleResize = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  const isLandscape = dimensions.width > dimensions.height && dimensions.height <= 580;
+  const isMobilePortrait = dimensions.height > dimensions.width && dimensions.width < 640;
+  const isCompact = isLandscape || isMobilePortrait || dimensions.height <= 580;
 
   // Test firing particles in preview canvas
   const [testProjectiles, setTestProjectiles] = useState<
@@ -63,10 +88,13 @@ export const GarageModal: React.FC<GarageModalProps> = ({
   >([]);
 
   useEffect(() => {
-    setSelectedSkin(currentSkin || 'DEFAULT');
-    setSelectedTrail(currentTrail || 'STANDARD');
-    setSelectedDecal(currentDecal || 'NONE');
-  }, [currentSkin, currentTrail, currentDecal, isOpen]);
+    if (isOpen) {
+      setSelectedSkin(currentSkin || 'DEFAULT');
+      setSelectedTrail(currentTrail || 'STANDARD');
+      setSelectedDecal(currentDecal || 'NONE');
+      setIsSavedRecently(false);
+    }
+  }, [isOpen, currentSkin, currentTrail, currentDecal]);
 
   // Turret rotation animation loop
   useEffect(() => {
@@ -96,10 +124,11 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       const cx = canvas.width / 2;
       const cy = canvas.height / 2;
       const now = Date.now();
+      const isSmall = canvas.width < 220;
+      const scale = isSmall ? 0.62 : 1;
 
       // Background Grid & Lighting Aura
-      const skinInfo = TANK_SKINS[selectedSkin];
-      const glowGrad = ctx.createRadialGradient(cx, cy, 20, cx, cy, 140);
+      const glowGrad = ctx.createRadialGradient(cx, cy, 15, cx, cy, isSmall ? 70 : 140);
       glowGrad.addColorStop(0, 'rgba(56, 189, 248, 0.12)');
       glowGrad.addColorStop(0.7, 'rgba(15, 23, 42, 0.4)');
       glowGrad.addColorStop(1, 'transparent');
@@ -108,8 +137,8 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
       // Rotating Pedestal Base
       ctx.save();
-      ctx.translate(cx, cy + 35);
-      ctx.scale(1, 0.45);
+      ctx.translate(cx, cy + (isSmall ? 22 : 35));
+      ctx.scale(scale, scale * 0.45);
       ctx.beginPath();
       ctx.arc(0, 0, 85, 0, Math.PI * 2);
       ctx.fillStyle = '#0f172a';
@@ -129,7 +158,8 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
       // Draw Tank Center
       ctx.save();
-      ctx.translate(cx, cy + 5);
+      ctx.translate(cx, cy + (isSmall ? 2 : 5));
+      ctx.scale(scale, scale);
 
       // Tank Shadow
       ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -178,46 +208,64 @@ export const GarageModal: React.FC<GarageModalProps> = ({
       } else if (selectedSkin === 'ARCTIC_FROST') {
         const frostGrad = ctx.createLinearGradient(-hw / 2, -hh / 2, hw / 2, hh / 2);
         frostGrad.addColorStop(0, '#0284c7');
-        frostGrad.addColorStop(0.5, '#38bdf8');
-        frostGrad.addColorStop(1, '#e0f2fe');
+        frostGrad.addColorStop(0.5, '#e0f2fe');
+        frostGrad.addColorStop(1, '#38bdf8');
         ctx.fillStyle = frostGrad;
         ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
-        // Shimmer crystal facet lines
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.2;
+        // Frost geometric shards
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
         ctx.beginPath();
-        ctx.moveTo(-18, -hh / 2); ctx.lineTo(-4, 0); ctx.lineTo(14, -hh / 2);
-        ctx.moveTo(-4, 0); ctx.lineTo(10, hh / 2);
-        ctx.stroke();
+        ctx.moveTo(-20, -10);
+        ctx.lineTo(-5, -16);
+        ctx.lineTo(-12, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(8, -8);
+        ctx.lineTo(24, -14);
+        ctx.lineTo(16, 6);
+        ctx.closePath();
+        ctx.fill();
       } else if (selectedSkin === 'VOLCANIC_MAGMA') {
-        ctx.fillStyle = '#1c1917';
+        const magmaGrad = ctx.createLinearGradient(-hw / 2, -hh / 2, hw / 2, hh / 2);
+        magmaGrad.addColorStop(0, '#1c1917');
+        magmaGrad.addColorStop(0.5, '#451a03');
+        magmaGrad.addColorStop(1, '#0c0a09');
+        ctx.fillStyle = magmaGrad;
         ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
-        // Pulsing magma veins
-        const pulse = 0.6 + Math.sin(now / 180) * 0.4;
-        ctx.strokeStyle = `rgba(239, 68, 68, ${pulse})`;
-        ctx.lineWidth = 2.5;
-        ctx.shadowColor = '#f97316';
-        ctx.shadowBlur = 8;
+        // Molten lava cracks
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = 1.8;
+        ctx.shadowColor = '#ea580c';
+        ctx.shadowBlur = 6;
         ctx.beginPath();
-        ctx.moveTo(-30, -8); ctx.lineTo(-10, -3); ctx.lineTo(6, -12); ctx.lineTo(26, -4);
-        ctx.moveTo(-16, 8); ctx.lineTo(4, 6); ctx.lineTo(22, 12);
+        ctx.moveTo(-24, -12);
+        ctx.lineTo(-10, -2);
+        ctx.lineTo(0, -8);
+        ctx.lineTo(14, 2);
+        ctx.lineTo(26, -4);
         ctx.stroke();
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-18, 6);
+        ctx.lineTo(-4, 12);
+        ctx.lineTo(10, 8);
+        ctx.lineTo(20, 14);
         ctx.stroke();
         ctx.shadowBlur = 0;
       } else if (selectedSkin === 'NEON_CYBERPUNK') {
-        ctx.fillStyle = '#0f172a';
+        ctx.fillStyle = '#05050f';
         ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
-        ctx.strokeStyle = '#d946ef';
-        ctx.lineWidth = 2;
-        ctx.shadowColor = '#d946ef';
-        ctx.shadowBlur = 10;
-        ctx.strokeRect(-hw / 2 + 2, -hh / 2 + 2, hw - 4, hh - 4);
-        ctx.strokeStyle = '#06b6d4';
+        // Cyber glowing traces
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 1.6;
+        ctx.shadowColor = '#00f0ff';
+        ctx.shadowBlur = 6;
+        ctx.strokeRect(-hw / 2 + 3, -hh / 2 + 3, hw - 6, hh - 6);
+        ctx.strokeStyle = '#ff007f';
+        ctx.shadowColor = '#ff007f';
         ctx.beginPath();
-        ctx.moveTo(-hw / 2, 0); ctx.lineTo(hw / 2, 0);
-        ctx.moveTo(0, -hh / 2); ctx.lineTo(0, hh / 2);
+        ctx.moveTo(-16, 0);
+        ctx.lineTo(16, 0);
         ctx.stroke();
         ctx.shadowBlur = 0;
       } else if (selectedSkin === 'ROYAL_GOLD') {
@@ -228,86 +276,154 @@ export const GarageModal: React.FC<GarageModalProps> = ({
         goldGrad.addColorStop(1, '#854d0e');
         ctx.fillStyle = goldGrad;
         ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(-hw / 2 + 4, -hh / 2 + 4, hw - 8, hh - 8);
+        // Gold ornamental border
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-hw / 2 + 2, -hh / 2 + 2, hw - 4, hh - 4);
       } else {
+        // Default skin uses chosen tankColor
         ctx.fillStyle = tankColor || '#2563eb';
         ctx.fillRect(-hw / 2, -hh / 2, hw, hh);
+        // Tactical panel bevel
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.fillRect(-hw / 2, -hh / 2, hw, 4);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+        ctx.fillRect(-hw / 2, hh / 2 - 4, hw, 4);
       }
 
-      // Glacis bevel
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      // Hull Border & Rivets
+      ctx.strokeStyle = '#090d16';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(-hw / 2, -hh / 2, hw, hh);
 
-      // Rear engine grilles
-      ctx.fillStyle = '#020617';
-      ctx.fillRect(-hw / 2 + 4, -12, 10, 24);
+      // Front Armor Angle
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.moveTo(hw / 2, -hh / 2);
+      ctx.lineTo(hw / 2 + 8, 0);
+      ctx.lineTo(hw / 2, hh / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
 
-      // 3. Rotating Turret with Barrel
+      // 3. Rotating Turret with Roof Decal
       ctx.save();
       ctx.rotate(turretRotation);
 
-      // Barrel
-      const barrelLen = 42;
-      const barrelW = 8;
-      const bGrad = ctx.createLinearGradient(0, -barrelW / 2, 0, barrelW / 2);
-      bGrad.addColorStop(0, '#475569');
-      bGrad.addColorStop(0.5, '#94a3b8');
-      bGrad.addColorStop(1, '#1e293b');
-      ctx.fillStyle = bGrad;
-      ctx.fillRect(0, -barrelW / 2, barrelLen, barrelW);
-
-      // Muzzle brake
+      // Turret Barrel
+      const barrelLen = 38;
+      const barrelW = 7;
       ctx.fillStyle = '#0f172a';
-      ctx.fillRect(barrelLen - 5, -barrelW / 2 - 2, 5, barrelW + 4);
+      ctx.fillRect(0, -barrelW / 2, barrelLen, barrelW);
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, -barrelW / 2, barrelLen, barrelW);
 
-      // Turret Dome
-      const domeR = 20;
-      const tGrad = ctx.createRadialGradient(-4, -4, 3, 0, 0, domeR);
-      tGrad.addColorStop(0, '#ffffff');
+      // Muzzle Brake
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(barrelLen - 2, -barrelW / 2 - 2, 8, barrelW + 4);
+      ctx.strokeStyle = '#090d16';
+      ctx.strokeRect(barrelLen - 2, -barrelW / 2 - 2, 8, barrelW + 4);
 
-      let tColor = tankColor || '#2563eb';
-      if (selectedSkin === 'CAMO_WOODLAND') tColor = '#2d4a22';
-      else if (selectedSkin === 'ARCTIC_FROST') tColor = '#0ea5e9';
-      else if (selectedSkin === 'VOLCANIC_MAGMA') tColor = '#dc2626';
-      else if (selectedSkin === 'NEON_CYBERPUNK') tColor = '#d946ef';
-      else if (selectedSkin === 'ROYAL_GOLD') tColor = '#eab308';
-
-      tGrad.addColorStop(0.3, tColor);
-      tGrad.addColorStop(1, '#0f172a');
-      ctx.fillStyle = tGrad;
+      // Turret Cupola Base
+      const tr = 17;
       ctx.beginPath();
-      ctx.arc(0, 0, domeR, 0, Math.PI * 2);
+      ctx.arc(0, 0, tr, 0, Math.PI * 2);
+
+      if (selectedSkin === 'ROYAL_GOLD') {
+        ctx.fillStyle = '#fef08a';
+      } else if (selectedSkin === 'ARCTIC_FROST') {
+        ctx.fillStyle = '#38bdf8';
+      } else if (selectedSkin === 'VOLCANIC_MAGMA') {
+        ctx.fillStyle = '#ea580c';
+      } else if (selectedSkin === 'NEON_CYBERPUNK') {
+        ctx.fillStyle = '#18182f';
+      } else if (selectedSkin === 'CAMO_WOODLAND') {
+        ctx.fillStyle = '#365314';
+      } else {
+        ctx.fillStyle = tankColor || '#1d4ed8';
+      }
+
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.strokeStyle = '#0f172a';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // 4. Roof Decal mounted on top of turret
+      // Hatch Ring
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, Math.PI * 2);
+      ctx.fillStyle = '#090d16';
+      ctx.fill();
+
+      // DRAW ROOF DECAL / FLAG ON TURRET
       if (selectedDecal === 'FLAG_VIETNAM') {
         ctx.save();
+        const fLen = 20;
+        const fH = 13;
+        const wave1 = Math.sin(now / 150) * 1.5;
+        const wave2 = Math.cos(now / 150) * 1.5;
+
+        ctx.beginPath();
+        ctx.moveTo(-9, -19);
+        ctx.bezierCurveTo(-14, -19 + wave1, -21, -19 + wave2, -28, -19);
+        ctx.lineTo(-28, -7);
+        ctx.bezierCurveTo(-21, -7 + wave2, -14, -7 + wave1, -9, -7);
+        ctx.closePath();
         ctx.fillStyle = '#da251d';
-        ctx.fillRect(-10, -7, 20, 14);
-        ctx.strokeStyle = '#ffd700';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-10, -7, 20, 14);
-        ctx.fillStyle = '#ffd700';
-        ctx.font = 'bold 11px sans-serif';
+        ctx.fill();
+        ctx.strokeStyle = '#991b1b';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+
+        // Flagpole
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-9, -21);
+        ctx.lineTo(-9, 0);
+        ctx.stroke();
+
+        // Golden Star
+        const starX = -18.5;
+        const starY = -13 + (wave1 + wave2) / 2;
+        ctx.fillStyle = '#ffff00';
+        ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('★', 0, 1);
+        ctx.fillText('★', starX, starY);
         ctx.restore();
       } else if (selectedDecal === 'PIRATE_SKULL') {
         ctx.save();
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(-9, -7, 18, 14);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px sans-serif';
+        const w1 = Math.sin(now / 150) * 1.5;
+        const w2 = Math.cos(now / 150) * 1.5;
+        const w3 = Math.sin(now / 150 + 1) * 1.5;
+
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-9, -27);
+        ctx.lineTo(-9, 0);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(-9, -25);
+        ctx.bezierCurveTo(-14, -25 + w1, -21, -25 + w2, -28, -25 + w3);
+        ctx.lineTo(-28, -13 + w3);
+        ctx.bezierCurveTo(-21, -13 + w2, -14, -13 + w1, -9, -13);
+        ctx.closePath();
+        ctx.fillStyle = '#090d16';
+        ctx.fill();
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+
+        const skullX = -18.5;
+        const skullY = -19 + (w1 + w2) / 2;
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('☠', 0, 1);
+        ctx.fillText('☠', skullX, skullY);
         ctx.restore();
       } else if (selectedDecal === 'TIGER_BEAST') {
         ctx.save();
@@ -421,10 +537,14 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
   const handleTestFire = () => {
     sounds.playShoot();
-    const cx = 140;
-    const cy = 135;
-    const speed = 7;
-    const muzzleDist = 48;
+    haptics.light();
+    const canvas = canvasRef.current;
+    const cx = canvas ? canvas.width / 2 : 140;
+    const isSmall = canvas ? canvas.width < 220 : false;
+    const cy = canvas ? canvas.height / 2 + (isSmall ? 2 : 5) : 135;
+    const scale = isSmall ? 0.62 : 1;
+    const speed = 7 * scale;
+    const muzzleDist = 48 * scale;
     const spawnX = cx + Math.cos(turretRotation) * muzzleDist;
     const spawnY = cy + Math.sin(turretRotation) * muzzleDist;
 
@@ -443,172 +563,252 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
   const handleApply = () => {
     sounds.playPowerUp();
+    haptics.light();
+    setIsSavedRecently(true);
+
+    try {
+      localStorage.setItem('tank_skin', selectedSkin);
+      localStorage.setItem('tank_trail', selectedTrail);
+      localStorage.setItem('tank_decal', selectedDecal);
+    } catch (err) {
+      console.warn('Failed to save cosmetics to localStorage:', err);
+    }
+
     onSaveCosmetics({
       skinId: selectedSkin,
       bulletTrail: selectedTrail,
       roofDecal: selectedDecal,
     });
-    onClose();
+
+    setTimeout(() => {
+      setIsSavedRecently(false);
+      onClose();
+    }, 450);
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-sky-500/20">
-              <Palette className="w-5 h-5" />
+    <div className="fixed inset-0 z-50 bg-[#060a17] text-white flex flex-col w-screen h-screen overflow-hidden select-none animate-in fade-in duration-200">
+      <div className="relative w-full h-full bg-[#060a17] flex flex-col overflow-hidden m-0 border-0 rounded-none shadow-none">
+        {/* Header - Compact & Pinned */}
+        <div
+          className={`shrink-0 border-b border-slate-800 flex items-center justify-between bg-slate-950/90 ${
+            isCompact ? 'px-2.5 py-1 sm:py-1.5' : 'px-5 md:px-7 py-3'
+          }`}
+        >
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            <div
+              className={`${
+                isCompact ? 'w-6 h-6 rounded-lg' : 'w-9 h-9 md:w-10 md:h-10 rounded-xl'
+              } bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20`}
+            >
+              <Palette className={isCompact ? 'w-3.5 h-3.5' : 'w-5 h-5'} />
             </div>
             <div>
-              <h2 className="text-lg font-black text-white font-mono flex items-center gap-2">
+              <h2
+                className={`font-black text-white font-mono flex items-center gap-1.5 ${
+                  isCompact ? 'text-xs sm:text-sm' : 'text-base sm:text-lg'
+                }`}
+              >
                 <span>GARA CHIẾN XA & XƯỞNG SKIN</span>
-                <span className="text-[10px] bg-sky-500/20 text-sky-400 border border-sky-500/30 px-2 py-0.5 rounded-full font-bold">
+                <span className="text-[8px] sm:text-[9.5px] bg-sky-500/20 text-sky-400 border border-sky-500/30 px-1.5 py-0.2 rounded-full font-bold">
                   WORKSHOP
                 </span>
               </h2>
-              <p className="text-xs text-slate-400">
-                Tùy biến sơn phủ ngoại trang, vệt đạn nòng pháo và biểu tượng cờ nóc tháp pháo
-              </p>
             </div>
           </div>
 
           <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            onClick={() => {
+              haptics.light();
+              onClose();
+            }}
+            className={`${
+              isCompact ? 'w-6 h-6 rounded-lg' : 'w-8 h-8 rounded-xl'
+            } bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0`}
+            title="Đóng"
           >
-            <X className="w-4 h-4" />
+            <X className={isCompact ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
           </button>
         </div>
 
-        {/* Modal Body: Left Showcase & Right Customization Tabs */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-5">
+        {/* Modal Body: Two-column layout in Landscape / Desktop, Stacked in Portrait */}
+        <div
+          className={`flex-1 min-h-0 overflow-hidden ${
+            isLandscape
+              ? 'grid grid-cols-12 gap-2 p-2'
+              : isMobilePortrait
+              ? 'flex flex-col gap-2 p-2.5 overflow-y-auto'
+              : 'grid grid-cols-12 gap-4 p-4 overflow-y-auto'
+          }`}
+        >
           {/* Left Column: Interactive 3D Showcase & Test Fire */}
-          <div className="lg:col-span-5 flex flex-col items-center gap-3 bg-slate-950/60 border border-slate-800 rounded-2xl p-4">
-            <div className="w-full flex items-center justify-between text-xs text-slate-400 font-mono">
-              <span className="flex items-center gap-1.5 text-sky-400 font-bold">
-                <Sparkles className="w-3.5 h-3.5" />
-                Mô Phỏng 360° Trực Quan
+          <div
+            className={`${
+              isLandscape
+                ? 'col-span-4 p-1.5 gap-1'
+                : isMobilePortrait
+                ? 'w-full p-2 gap-1.5 shrink-0'
+                : 'col-span-5 p-3.5 gap-2.5'
+            } flex flex-col items-center bg-slate-950/70 border border-slate-800/80 rounded-xl justify-between`}
+          >
+            <div className="w-full flex items-center justify-between text-slate-400 font-mono">
+              <span className={`flex items-center gap-1 text-sky-400 font-bold ${isCompact ? 'text-[8.5px]' : 'text-xs'}`}>
+                <Sparkles className="w-2.5 h-2.5" />
+                Mô Phỏng 360°
               </span>
               <button
                 type="button"
-                onClick={() => setIsAutoRotate((prev) => !prev)}
-                className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                onClick={() => {
+                  haptics.light();
+                  setIsAutoRotate((prev) => !prev);
+                }}
+                className={`flex items-center gap-1 text-[8.5px] px-1.5 py-0.2 rounded border transition-all cursor-pointer ${
                   isAutoRotate
                     ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
               >
-                <RotateCw className={`w-3 h-3 ${isAutoRotate ? 'animate-spin' : ''}`} />
+                <RotateCw className={`w-2 h-2 ${isAutoRotate ? 'animate-spin' : ''}`} />
                 <span>{isAutoRotate ? 'Tự Xoay' : 'Dừng'}</span>
               </button>
             </div>
 
             {/* Canvas Preview Area */}
-            <div className="relative w-full aspect-square max-w-[280px] bg-radial from-slate-900 to-slate-950 rounded-2xl border border-slate-800/80 overflow-hidden flex items-center justify-center shadow-inner">
+            <div
+              className={`relative w-full ${
+                isLandscape ? 'max-w-[130px] h-[80px]' : isMobilePortrait ? 'max-w-[170px] h-[105px]' : 'aspect-square max-w-[240px]'
+              } bg-radial from-slate-900 to-slate-950 rounded-lg border border-slate-800/80 overflow-hidden flex items-center justify-center shadow-inner my-auto`}
+            >
               <canvas
                 ref={canvasRef}
-                width={280}
-                height={270}
+                width={isLandscape ? 130 : isMobilePortrait ? 170 : 240}
+                height={isLandscape ? 80 : isMobilePortrait ? 105 : 240}
                 className="w-full h-full cursor-grab active:cursor-grabbing"
                 onClick={() => setTurretRotation((prev) => (prev + 0.4) % (Math.PI * 2))}
               />
 
               {/* Angle indicator tag */}
-              <div className="absolute bottom-2 left-2 text-[10px] font-mono text-slate-500 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
-                Tháp Pháo: {Math.round((turretRotation * 180) / Math.PI)}°
+              <div className="absolute bottom-0.5 left-0.5 text-[7.5px] font-mono text-slate-500 bg-slate-950/80 px-1 py-0 rounded border border-slate-800">
+                {Math.round((turretRotation * 180) / Math.PI)}°
               </div>
             </div>
 
-            {/* Test Fire & Angle Controls */}
-            <div className="w-full flex items-center gap-2">
+            {/* Test Fire Control */}
+            <div className="w-full flex items-center gap-1">
               <button
                 type="button"
                 onClick={handleTestFire}
-                className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg shadow-orange-600/20 transition-all cursor-pointer active:scale-95"
+                className={`w-full ${
+                  isCompact ? 'py-1 text-[9px]' : 'py-1.5 px-3 text-xs'
+                } rounded-lg bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-slate-950 font-black uppercase tracking-wider flex items-center justify-center gap-1 shadow-md shadow-orange-600/20 transition-all cursor-pointer active:scale-95`}
               >
-                <Crosshair className="w-3.5 h-3.5" />
+                <Crosshair className="w-2.5 h-2.5" />
                 <span>BẮN THỬ VỆT ĐẠN</span>
               </button>
             </div>
 
             {/* Selected Summary Card */}
-            <div className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5">
+            <div
+              className={`w-full bg-slate-900/90 border border-slate-800/80 rounded-lg ${
+                isCompact ? 'p-1 text-[8.5px] space-y-0.5' : 'p-2.5 text-xs space-y-1'
+              }`}
+            >
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Sơn xe:</span>
-                <span className="font-bold text-white font-mono">{TANK_SKINS[selectedSkin]?.vietnameseName}</span>
+                <span className="text-slate-400">Sơn:</span>
+                <span className="font-bold text-white font-mono truncate">{TANK_SKINS[selectedSkin]?.vietnameseName}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Vệt đạn:</span>
-                <span className="font-bold text-amber-400 font-mono flex items-center gap-1">
+                <span className="text-slate-400">Vệt:</span>
+                <span className="font-bold text-amber-400 font-mono flex items-center gap-0.5 truncate">
                   <span>{BULLET_TRAILS[selectedTrail]?.icon}</span>
-                  <span>{BULLET_TRAILS[selectedTrail]?.vietnameseName}</span>
+                  <span className="truncate">{BULLET_TRAILS[selectedTrail]?.vietnameseName}</span>
                 </span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Biểu tượng / Cờ:</span>
-                <span className="font-bold text-sky-400 font-mono flex items-center gap-1">
+                <span className="text-slate-400">Decal:</span>
+                <span className="font-bold text-sky-400 font-mono flex items-center gap-0.5 truncate">
                   <span>{ROOF_DECALS[selectedDecal]?.icon}</span>
-                  <span>{ROOF_DECALS[selectedDecal]?.vietnameseName}</span>
+                  <span className="truncate">{ROOF_DECALS[selectedDecal]?.vietnameseName}</span>
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Customization Tabs & Options */}
-          <div className="lg:col-span-7 flex flex-col gap-4">
+          {/* Right Column: Customization Tabs & Scrollable Grid */}
+          <div
+            className={`${
+              isLandscape
+                ? 'col-span-8 flex flex-col h-full min-h-0 gap-1.5'
+                : isMobilePortrait
+                ? 'w-full flex flex-col gap-2'
+                : 'col-span-7 flex flex-col h-full min-h-0 gap-3'
+            }`}
+          >
             {/* Tab Navigation Buttons */}
-            <div className="flex items-center gap-2 p-1 bg-slate-950/70 border border-slate-800 rounded-2xl">
+            <div
+              className={`flex items-center gap-1 bg-slate-950/80 border border-slate-800 rounded-lg p-0.5 shrink-0`}
+            >
               <button
                 type="button"
-                onClick={() => setActiveTab('skin')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                onClick={() => {
+                  haptics.light();
+                  setActiveTab('skin');
+                }}
+                className={`flex-1 rounded-md font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  isCompact ? 'py-1 text-[9.5px]' : 'py-1.5 px-3 text-xs'
+                } ${
                   activeTab === 'skin'
-                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                    ? 'bg-sky-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Palette className="w-3.5 h-3.5" />
-                <span>Sơn Xe ({Object.keys(TANK_SKINS).length})</span>
+                <Palette className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>Sơn Xe</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setActiveTab('trail')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                onClick={() => {
+                  haptics.light();
+                  setActiveTab('trail');
+                }}
+                className={`flex-1 rounded-md font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  isCompact ? 'py-1 text-[9.5px]' : 'py-1.5 px-3 text-xs'
+                } ${
                   activeTab === 'trail'
-                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
+                    ? 'bg-amber-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Flame className="w-3.5 h-3.5" />
-                <span>Vệt Đạn ({Object.keys(BULLET_TRAILS).length})</span>
+                <Flame className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>Vệt Đạn</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setActiveTab('decal')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                onClick={() => {
+                  haptics.light();
+                  setActiveTab('decal');
+                }}
+                className={`flex-1 rounded-md font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  isCompact ? 'py-1 text-[9.5px]' : 'py-1.5 px-3 text-xs'
+                } ${
                   activeTab === 'decal'
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    ? 'bg-indigo-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <Flag className="w-3.5 h-3.5" />
-                <span>Decal / Cờ ({Object.keys(ROOF_DECALS).length})</span>
+                <Flag className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>Decal Cờ</span>
               </button>
             </div>
 
             {/* TAB 1: TANK SKINS */}
             {activeTab === 'skin' && (
-              <div className="space-y-2.5">
-                <div className="text-xs text-slate-400 font-medium">
-                  Chọn mẫu sơn ngoại trang cho thân và tháp pháo xe tăng của bạn:
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 space-y-1">
+                <div className="grid grid-cols-2 gap-1.5">
                   {(Object.keys(TANK_SKINS) as TankSkinId[]).map((skinId) => {
                     const skin = TANK_SKINS[skinId];
                     const isSelected = selectedSkin === skinId;
@@ -617,35 +817,39 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                         key={skinId}
                         type="button"
                         onClick={() => {
+                          haptics.light();
                           setSelectedSkin(skinId);
                           sounds.playPowerUp();
                         }}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col gap-1.5 ${
+                        className={`p-1.5 sm:p-2 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-sky-500/15 border-sky-400 ring-2 ring-sky-500/50 text-white shadow-lg shadow-sky-500/20'
+                            ? 'bg-sky-500/15 border-sky-400 ring-1 ring-sky-500 text-white shadow-md'
                             : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-300'
                         }`}
                       >
-                        {/* Selected Indicator */}
                         {isSelected && (
-                          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-sky-500 text-slate-950 flex items-center justify-center">
-                            <Check className="w-3 h-3 stroke-[3]" />
+                          <div className="absolute top-1.5 right-1.5 w-3.5 h-3.5 rounded-full bg-sky-500 text-slate-950 flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
                           </div>
                         )}
 
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-sky-400">
+                        <div className="flex items-center gap-1.5 min-w-0 pr-4">
+                          <span className="text-[7.5px] font-mono font-black uppercase px-1 py-0.1 rounded bg-slate-900 border border-slate-700 text-sky-400 shrink-0">
                             {skin.badge}
                           </span>
-                          <span className="font-bold text-xs text-white truncate">{skin.vietnameseName}</span>
+                          <span className="font-bold text-[10px] sm:text-[11px] text-white truncate">
+                            {skin.vietnameseName}
+                          </span>
                         </div>
 
                         {/* Skin Palette Visual Strip */}
                         <div
-                          className={`w-full h-3 rounded-lg border bg-gradient-to-r ${skin.previewGradient}`}
+                          className={`w-full h-2 rounded border border-white/20 bg-gradient-to-r ${skin.previewGradient} mt-1`}
                         />
 
-                        <p className="text-[11px] text-slate-400 line-clamp-2">{skin.description}</p>
+                        {!isLandscape && (
+                          <p className="text-[9px] text-slate-400 line-clamp-1 mt-0.5">{skin.description}</p>
+                        )}
                       </button>
                     );
                   })}
@@ -655,12 +859,8 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
             {/* TAB 2: BULLET TRAILS */}
             {activeTab === 'trail' && (
-              <div className="space-y-2.5">
-                <div className="text-xs text-slate-400 font-medium">
-                  Chọn hiệu ứng ánh sáng nòng pháo và vệt đạn xé toạc không gian:
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 space-y-1">
+                <div className="grid grid-cols-2 gap-1.5">
                   {(Object.keys(BULLET_TRAILS) as BulletTrailId[]).map((trailId) => {
                     const trail = BULLET_TRAILS[trailId];
                     const isSelected = selectedTrail === trailId;
@@ -669,30 +869,33 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                         key={trailId}
                         type="button"
                         onClick={() => {
+                          haptics.light();
                           setSelectedTrail(trailId);
                           sounds.playShoot();
                         }}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col gap-1.5 ${
+                        className={`p-1.5 sm:p-2 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-amber-500/15 border-amber-400 ring-2 ring-amber-500/50 text-white shadow-lg shadow-amber-500/20'
+                            ? 'bg-amber-500/15 border-amber-400 ring-1 ring-amber-500 text-white shadow-md'
                             : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-300'
                         }`}
                       >
                         {isSelected && (
-                          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center">
-                            <Check className="w-3 h-3 stroke-[3]" />
+                          <div className="absolute top-1.5 right-1.5 w-3.5 h-3.5 rounded-full bg-amber-500 text-slate-950 flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
                           </div>
                         )}
 
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{trail.icon}</span>
-                          <span className="font-bold text-xs text-white truncate">{trail.vietnameseName}</span>
+                        <div className="flex items-center gap-1.5 min-w-0 pr-4">
+                          <span className="text-xs shrink-0">{trail.icon}</span>
+                          <span className="font-bold text-[10px] sm:text-[11px] text-white truncate">
+                            {trail.vietnameseName}
+                          </span>
                         </div>
 
                         {/* Color Glow Indicator */}
-                        <div className="flex items-center gap-2 pt-0.5">
+                        <div className="flex items-center gap-1.5 pt-1">
                           <div
-                            className="w-4 h-4 rounded-full border border-white/50 shadow-md"
+                            className="w-2.5 h-2.5 rounded-full border border-white/60 shadow shrink-0"
                             style={{ backgroundColor: trail.color }}
                           />
                           <div
@@ -703,7 +906,9 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                           />
                         </div>
 
-                        <p className="text-[11px] text-slate-400 line-clamp-2">{trail.description}</p>
+                        {!isLandscape && (
+                          <p className="text-[9px] text-slate-400 line-clamp-1 mt-0.5">{trail.description}</p>
+                        )}
                       </button>
                     );
                   })}
@@ -713,12 +918,8 @@ export const GarageModal: React.FC<GarageModalProps> = ({
 
             {/* TAB 3: ROOF DECALS & FLAGS */}
             {activeTab === 'decal' && (
-              <div className="space-y-2.5">
-                <div className="text-xs text-slate-400 font-medium">
-                  Gắn cờ biểu tượng hoặc huy hiệu oai dũng lên nóc tháp pháo xe tăng:
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-0.5 space-y-1">
+                <div className="grid grid-cols-2 gap-1.5">
                   {(Object.keys(ROOF_DECALS) as RoofDecalId[]).map((decalId) => {
                     const decal = ROOF_DECALS[decalId];
                     const isSelected = selectedDecal === decalId;
@@ -727,27 +928,32 @@ export const GarageModal: React.FC<GarageModalProps> = ({
                         key={decalId}
                         type="button"
                         onClick={() => {
+                          haptics.light();
                           setSelectedDecal(decalId);
                           sounds.playPowerUp();
                         }}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col gap-1.5 ${
+                        className={`p-1.5 sm:p-2 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-indigo-500/15 border-indigo-400 ring-2 ring-indigo-500/50 text-white shadow-lg shadow-indigo-500/20'
+                            ? 'bg-indigo-500/15 border-indigo-400 ring-1 ring-indigo-500 text-white shadow-md'
                             : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 text-slate-300'
                         }`}
                       >
                         {isSelected && (
-                          <div className="absolute top-2.5 right-2.5 w-5 h-5 rounded-full bg-indigo-500 text-slate-950 flex items-center justify-center">
-                            <Check className="w-3 h-3 stroke-[3]" />
+                          <div className="absolute top-1.5 right-1.5 w-3.5 h-3.5 rounded-full bg-indigo-500 text-slate-950 flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
                           </div>
                         )}
 
-                        <div className="flex items-center gap-2">
-                          <span className="text-xl">{decal.icon}</span>
-                          <span className="font-bold text-xs text-white truncate">{decal.vietnameseName}</span>
+                        <div className="flex items-center gap-1.5 min-w-0 pr-4">
+                          <DecalBadge decalId={decalId} size="sm" showWavingAnimation={isSelected} />
+                          <span className="font-bold text-[10px] sm:text-[11px] text-white truncate">
+                            {decal.vietnameseName}
+                          </span>
                         </div>
 
-                        <p className="text-[11px] text-slate-400 line-clamp-2">{decal.description}</p>
+                        {!isLandscape && (
+                          <p className="text-[9px] text-slate-400 line-clamp-1 mt-0.5">{decal.description}</p>
+                        )}
                       </button>
                     );
                   })}
@@ -757,27 +963,43 @@ export const GarageModal: React.FC<GarageModalProps> = ({
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="px-5 py-3.5 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between">
-          <div className="text-xs text-slate-400 hidden sm:block">
-            Mọi tùy chỉnh ngoại trang sẽ hiển thị với tất cả người chơi trong phòng trận!
+        {/* Footer Actions - Pinned and Always Fully Visible */}
+        <div
+          className={`shrink-0 ${
+            isCompact ? 'px-2.5 py-1' : 'px-5 py-2.5'
+          } border-t border-slate-800 bg-slate-950/95 flex items-center justify-between`}
+        >
+          <div className="text-[8.5px] sm:text-[10px] text-slate-400 truncate max-w-[200px] hidden sm:block">
+            Ngoại trang hiển thị với tất cả người chơi!
           </div>
 
-          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+          <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto justify-end">
             <button
               type="button"
-              onClick={onClose}
-              className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-colors cursor-pointer"
+              onClick={() => {
+                haptics.light();
+                onClose();
+              }}
+              className={`${
+                isCompact ? 'py-1 px-3 text-[10px]' : 'py-1.5 px-4 text-xs'
+              } rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold transition-colors cursor-pointer active:scale-95`}
             >
               Hủy
             </button>
             <button
               type="button"
               onClick={handleApply}
-              className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-sky-600 via-indigo-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white text-xs font-black uppercase tracking-wider shadow-lg shadow-sky-600/30 transition-all cursor-pointer active:scale-95 flex items-center gap-2"
+              disabled={isSavedRecently}
+              className={`${
+                isCompact ? 'py-1 px-3 text-[10px]' : 'py-1.5 px-5 text-xs'
+              } rounded-lg ${
+                isSavedRecently
+                  ? 'bg-gradient-to-r from-emerald-600 to-green-600 text-white ring-1 ring-emerald-400 shadow-emerald-500/40'
+                  : 'bg-gradient-to-r from-sky-600 via-indigo-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white shadow-sky-600/30'
+              } font-black uppercase tracking-wider shadow transition-all cursor-pointer active:scale-95 flex items-center gap-1`}
             >
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>TRANG BỊ & LƯU LẠI</span>
+              <Check className="w-3 h-3 stroke-[3]" />
+              <span>{isSavedRecently ? '✓ ĐÃ LƯU!' : 'TRANG BỊ & LƯU LẠI'}</span>
             </button>
           </div>
         </div>

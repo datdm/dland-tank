@@ -33,7 +33,7 @@ interface Decal {
   y: number;
   angle: number;
   alpha: number;
-  type: 'track' | 'scorch';
+  type: 'track' | 'scorch' | 'snow_skid' | 'sand_track' | 'wet_track';
   createdAt: number;
 }
 
@@ -63,7 +63,13 @@ interface GameCanvasProps {
   freeCameraPos?: { x: number; y: number };
   onSelectSpectatorTarget?: (id: string) => void;
   currentWeather?: WeatherType;
-  focusBeacon?: { x: number; y: number; timestamp: number } | null;
+  focusBeacon?: {
+    x: number;
+    y: number;
+    timestamp: number;
+    pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
+    senderName?: string;
+  } | null;
   onPanCamera?: (camX: number, camY: number) => void;
   onFocusWorldPos?: (worldX: number, worldY: number) => void;
   isFreeCameraActive?: boolean;
@@ -390,6 +396,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.beginPath();
           ctx.arc(0, 0, 42, 0, Math.PI * 2);
           ctx.fill();
+        } else if (decal.type === 'snow_skid') {
+          // Dual ice drift skid marks on snowy ground
+          ctx.fillStyle = 'rgba(224, 242, 254, 0.55)';
+          ctx.fillRect(-12, -10, 24, 4);
+          ctx.fillRect(-12, 6, 24, 4);
+          ctx.strokeStyle = 'rgba(186, 230, 253, 0.35)';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(-12, -10, 24, 4);
+          ctx.strokeRect(-12, 6, 24, 4);
+        } else if (decal.type === 'sand_track') {
+          // Desert sand tire tread indentation
+          ctx.fillStyle = 'rgba(217, 119, 6, 0.32)';
+          ctx.fillRect(-10, -9, 20, 3.5);
+          ctx.fillRect(-10, 5.5, 20, 3.5);
+        } else if (decal.type === 'wet_track') {
+          // Wet road puddle wheel tracks
+          ctx.fillStyle = 'rgba(14, 165, 233, 0.28)';
+          ctx.fillRect(-10, -9, 20, 3.5);
+          ctx.fillRect(-10, 5.5, 20, 3.5);
+        } else if (decal.type === 'track') {
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
+          ctx.fillRect(-10, -9, 20, 3.5);
+          ctx.fillRect(-10, 5.5, 20, 3.5);
         }
         ctx.restore();
       }
@@ -401,17 +430,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const elapsed = (now - focusBeacon.timestamp) / 1000;
         const bx = focusBeacon.x;
         const by = focusBeacon.y;
+        const pType = focusBeacon.pingType || 'ATTACK';
+        const pColor = pType === 'DEFEND' ? '#38bdf8' : pType === 'GATHER' ? '#10b981' : '#f59e0b';
+        const pRgb = pType === 'DEFEND' ? '56, 189, 248' : pType === 'GATHER' ? '16, 185, 129' : '245, 158, 11';
+        const pLabel = pType === 'DEFEND' ? '🛡️ PHÒNG THỦ VỊ TRÍ' : pType === 'GATHER' ? '🤝 TẬP HỢP ĐỘI HÌNH' : '⚔️ TẬP TRUNG HỎA LỰC';
 
         ctx.save();
         ctx.translate(bx, by);
 
-        // 3 concentric expanding holographic rings
+        // Skyward holographic laser beacon pillar (Z-axis column of light)
+        const pillarGrad = ctx.createLinearGradient(0, 0, 0, -180);
+        pillarGrad.addColorStop(0, `rgba(${pRgb}, 0.55)`);
+        pillarGrad.addColorStop(0.5, `rgba(${pRgb}, 0.25)`);
+        pillarGrad.addColorStop(1, `rgba(${pRgb}, 0)`);
+        ctx.fillStyle = pillarGrad;
+        ctx.beginPath();
+        ctx.moveTo(-16, 0);
+        ctx.lineTo(-4, -180);
+        ctx.lineTo(4, -180);
+        ctx.lineTo(16, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        // 3 concentric expanding holographic rings on ground
         for (let rIdx = 0; rIdx < 3; rIdx++) {
           const ringProgress = (elapsed + rIdx * 0.33) % 1;
-          const ringRadius = 15 + ringProgress * 110;
+          const ringRadius = 15 + ringProgress * 115;
           const ringAlpha = Math.max(0, 1 - ringProgress);
 
-          ctx.strokeStyle = `rgba(245, 158, 11, ${ringAlpha * 0.9})`;
+          ctx.strokeStyle = `rgba(${pRgb}, ${ringAlpha * 0.9})`;
           ctx.lineWidth = 2.5;
           ctx.beginPath();
           ctx.arc(0, 0, ringRadius, 0, Math.PI * 2);
@@ -420,22 +467,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Center spinning tactical reticle
         ctx.rotate(now / 350);
-        ctx.strokeStyle = '#f59e0b';
+        ctx.strokeStyle = pColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(0, 0, 22, 0, Math.PI * 2);
+        ctx.arc(0, 0, 24, 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.beginPath();
-        ctx.moveTo(-34, 0);
-        ctx.lineTo(-10, 0);
-        ctx.moveTo(10, 0);
-        ctx.lineTo(34, 0);
-        ctx.moveTo(0, -34);
-        ctx.lineTo(0, -10);
-        ctx.moveTo(0, 10);
-        ctx.lineTo(0, 34);
+        ctx.moveTo(-36, 0);
+        ctx.lineTo(-12, 0);
+        ctx.moveTo(12, 0);
+        ctx.lineTo(36, 0);
+        ctx.moveTo(0, -36);
+        ctx.lineTo(0, -12);
+        ctx.moveTo(0, 12);
+        ctx.lineTo(0, 36);
         ctx.stroke();
+
+        // Sender tag & Ping Type Billboard (facing screen)
+        ctx.rotate(-now / 350); // Un-rotate
+        const tagY = -48 - Math.sin(now / 150) * 3;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.strokeStyle = pColor;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.roundRect(-85, tagY - 18, 170, 24, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = 'bold 10px Plus Jakarta Sans, sans-serif';
+        ctx.fillStyle = pColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const sender = focusBeacon.senderName ? `[${focusBeacon.senderName}] ` : '';
+        ctx.fillText(`${sender}${pLabel}`, 0, tagY - 6);
+
         ctx.restore();
       }
 
@@ -610,6 +676,154 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
+      // ==========================================
+      // TACTICAL FIRING RANGE INDICATOR (Vùng tròn cự ly cho đạn bắn)
+      // ==========================================
+      const activeTankForRange = isSpectator
+        ? (spectatorTargetId && spectatorTargetId !== 'free' ? tanks.find((t) => t.id === spectatorTargetId) : null)
+        : tanks.find((t) => t.id === myPlayerId);
+
+      if (activeTankForRange && !activeTankForRange.isDead) {
+        const stats = TANK_CLASSES[activeTankForRange.tankClass] || TANK_CLASSES.STRIKER;
+        let firingRange = stats.firingRange || 500;
+        const isBarrageActive = (activeTankForRange.skills?.barrageUntil || 0) > now;
+        const isPlasmaAmmo = activeTankForRange.nextAmmoType === 'PLASMA';
+
+        // Dynamic range buffs (Chiêu cuối Hyper Barrage +30% tầm bắn, Đạn Plasma +35% tầm)
+        if (isBarrageActive) {
+          firingRange = Math.round(firingRange * 1.3);
+        } else if (isPlasmaAmmo) {
+          firingRange = Math.round(firingRange * 1.35);
+        }
+
+        const themeColor = activeTankForRange.team === 'RED'
+          ? '#f43f5e'
+          : activeTankForRange.team === 'BLUE'
+          ? '#00f0ff'
+          : isBarrageActive
+          ? '#f59e0b'
+          : stats.colorPreset || '#38bdf8';
+
+        ctx.save();
+        ctx.translate(activeTankForRange.x, activeTankForRange.y);
+
+        // 1. Visible radial gradient fill representing the entire bullet envelope
+        const rangeGlow = ctx.createRadialGradient(0, 0, firingRange * 0.2, 0, 0, firingRange);
+        rangeGlow.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        rangeGlow.addColorStop(0.5, `${themeColor}0a`); // ~4%
+        rangeGlow.addColorStop(0.8, `${themeColor}1a`); // ~10%
+        rangeGlow.addColorStop(0.95, `${themeColor}33`); // ~20%
+        rangeGlow.addColorStop(1, `${themeColor}55`); // ~33%
+        ctx.fillStyle = rangeGlow;
+        ctx.beginPath();
+        ctx.arc(0, 0, firingRange, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. High-Tech Animated Outer Perimeter Circle with Glow
+        ctx.save();
+        ctx.shadowColor = themeColor;
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = themeColor;
+        ctx.lineWidth = 2.8;
+        ctx.setLineDash([16, 10]);
+        ctx.lineDashOffset = -(now / 110) % 26;
+        ctx.beginPath();
+        ctx.arc(0, 0, firingRange, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        // 3. Inner Concentric Guide Ring
+        ctx.strokeStyle = `${themeColor}77`;
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([6, 6]);
+        ctx.lineDashOffset = (now / 220) % 12;
+        ctx.beginPath();
+        ctx.arc(0, 0, firingRange - 7, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 4. Directional Compass Crosshair Markers (every 45° around perimeter)
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+          const isMajor = a % (Math.PI / 2) === 0;
+          const markerLen = isMajor ? 16 : 8;
+          const cosA = Math.cos(a);
+          const sinA = Math.sin(a);
+          ctx.beginPath();
+          ctx.moveTo(cosA * (firingRange - markerLen), sinA * (firingRange - markerLen));
+          ctx.lineTo(cosA * (firingRange + markerLen), sinA * (firingRange + markerLen));
+          ctx.stroke();
+        }
+
+        // 5. Active Turret Aim Trajectory Line & Crosshair Pip
+        const turretAngle = activeTankForRange.turretAngle;
+        const tipX = Math.cos(turretAngle) * firingRange;
+        const tipY = Math.sin(turretAngle) * firingRange;
+
+        // Trajectory laser aim line along current turret aim
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.shadowColor = themeColor;
+        ctx.shadowBlur = 8;
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([10, 6]);
+        ctx.lineDashOffset = -(now / 70) % 16;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(turretAngle) * 36, Math.sin(turretAngle) * 36);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+        ctx.restore();
+
+        // Target Reticle pip at max firing range
+        ctx.save();
+        ctx.strokeStyle = '#ffffff';
+        ctx.fillStyle = themeColor;
+        ctx.shadowColor = themeColor;
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, 8, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Crosshair reticle lines at the target pip
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(tipX - 12, tipY);
+        ctx.lineTo(tipX + 12, tipY);
+        ctx.moveTo(tipX, tipY - 12);
+        ctx.lineTo(tipX, tipY + 12);
+        ctx.stroke();
+        ctx.restore();
+
+        // 6. Tactical Range Spec Pill Badge
+        const badgeY = -firingRange - 14;
+        const buffSuffix = isBarrageActive ? ' 🔥 +30% ULTI' : isPlasmaAmmo ? ' ⚡ +35% PLASMA' : '';
+        const badgeText = `🎯 CỰ LY ĐẠN: ${firingRange}M (${stats.name.split(' ')[0].toUpperCase()}${buffSuffix})`;
+        ctx.font = 'bold 11px font-mono, monospace';
+        const textWidth = ctx.measureText(badgeText).width;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.strokeStyle = `${themeColor}dd`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(-textWidth / 2 - 8, badgeY - 14, textWidth + 16, 22, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(badgeText, 0, badgeY - 3);
+
+        ctx.restore();
+      }
+
       // Boss Leviathan Shadow
       if (boss && boss.isAlive) {
         ctx.save();
@@ -719,6 +933,47 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           type: 'tank',
           item: tank,
         });
+
+        // Dynamic Weather Tread Mechanics & Drift Spray
+        const isMoving = tank.isDrifting || Math.hypot(tank.vx || 0, tank.vy || 0) > 0.4 || tank.speed > 0;
+        if (isMoving && Math.random() < (tank.isDrifting ? 0.65 : 0.22)) {
+          if (decalsRef.current.length < 80) {
+            let decalType: 'snow_skid' | 'sand_track' | 'wet_track' | 'track' = 'track';
+            if (currentWeather === 'SNOW') decalType = 'snow_skid';
+            else if (currentWeather === 'DESERT') decalType = 'sand_track';
+            else if (currentWeather === 'RAIN') decalType = 'wet_track';
+
+            decalsRef.current.push({
+              x: tank.x - Math.cos(tank.angle) * 14,
+              y: tank.y - Math.sin(tank.angle) * 14,
+              angle: tank.angle,
+              alpha: tank.isDrifting ? 0.75 : 0.4,
+              type: decalType,
+              createdAt: now,
+            });
+          }
+
+          // Emit drifting spray particles when drifting on snow or skidding in desert
+          if ((tank.isDrifting || currentWeather === 'SNOW' || currentWeather === 'DESERT') && particlesRef.current.length < 150) {
+            if (tank.isDrifting || Math.random() < 0.25) {
+              const pAngle = tank.angle + Math.PI + (Math.random() - 0.5) * 0.9;
+              const pSpeed = 1.0 + Math.random() * 2.2;
+              const pColor = currentWeather === 'SNOW' ? '#e0f2fe' : (currentWeather === 'DESERT' ? '#f59e0b' : '#38bdf8');
+              particlesRef.current.push({
+                x: tank.x - Math.cos(tank.angle) * 18 + (Math.random() - 0.5) * 8,
+                y: tank.y - Math.sin(tank.angle) * 18 + (Math.random() - 0.5) * 8,
+                z: 0,
+                vx: Math.cos(pAngle) * pSpeed,
+                vy: Math.sin(pAngle) * pSpeed,
+                vz: 0,
+                radius: 2.2 + Math.random() * 2.2,
+                color: pColor,
+                alpha: 0.75,
+                decay: 0.045,
+              });
+            }
+          }
+        }
       }
 
       for (const crate of powerUps) {
@@ -1301,30 +1556,125 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // Roof Decal / Flag Emblem mounted on top of turret
           const decal = tank.roofDecal || 'NONE';
           if (decal === 'FLAG_VIETNAM') {
-            // Cờ Đỏ Sao Vàng Việt Nam tung bay trên nóc tháp pháo
+            // Cờ Đỏ Sao Vàng Việt Nam tung bay sống động trên tháp pháo
             ctx.save();
+            const seed = (tank.id.charCodeAt(0) || 1) * 3;
+            const waveT = (now / 140) + seed;
+            const w1 = Math.sin(waveT) * 1.8;
+            const w2 = Math.sin(waveT + 1.2) * 2.5;
+            const w3 = Math.sin(waveT + 2.4) * 1.6;
+
+            // 1. Flagpole Mount at antenna socket (-7, -4)
+            ctx.fillStyle = '#1e293b';
+            ctx.beginPath();
+            ctx.arc(-7, -4, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+
+            // Mast (Silver alloy flagpole standing up)
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = 1.3;
+            ctx.beginPath();
+            ctx.moveTo(-7, -4);
+            ctx.lineTo(-7, -19);
+            ctx.stroke();
+
+            // Mast Gold Finial Sphere
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath();
+            ctx.arc(-7, -19, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. Waving Red Silk Banner (15px length, 9px height)
+            ctx.beginPath();
+            ctx.moveTo(-7, -18);
+            ctx.bezierCurveTo(-11, -18 + w1, -17, -18 + w2, -22, -18 + w3);
+            ctx.lineTo(-22, -9 + w3);
+            ctx.bezierCurveTo(-17, -9 + w2, -11, -9 + w1, -7, -9);
+            ctx.closePath();
+
             ctx.fillStyle = '#da251d';
-            ctx.fillRect(-6, -4, 12, 8);
+            ctx.fill();
             ctx.strokeStyle = '#ffd700';
             ctx.lineWidth = 0.6;
-            ctx.strokeRect(-6, -4, 12, 8);
-            // Gold Star
+            ctx.stroke();
+
+            // Cloth ripple shading
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+            ctx.beginPath();
+            ctx.ellipse(-14, -13.5 + w2, 2.5, 4, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Gold 5-Pointed Star in center of waving flag
+            const starX = -14.5;
+            const starY = -13.5 + (w1 + w2) / 2;
             ctx.fillStyle = '#ffd700';
+            ctx.shadowColor = '#ffd700';
+            ctx.shadowBlur = 3;
             ctx.font = 'bold 7px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
+            ctx.fillText('★', starX, starY);
+            ctx.shadowBlur = 0;
+
+            // Also a subtle patriotic red/gold emblem ring on the turret dome
+            ctx.fillStyle = 'rgba(218, 37, 29, 0.65)';
+            ctx.beginPath();
+            ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+            ctx.fillStyle = '#ffd700';
+            ctx.font = 'bold 5.5px sans-serif';
             ctx.fillText('★', 0, 0.5);
+
             ctx.restore();
           } else if (decal === 'PIRATE_SKULL') {
-            // Cờ Hải Tặc Jolly Roger
+            // Cờ Hải Tặc Jolly Roger tung bay
             ctx.save();
-            ctx.fillStyle = '#000000';
-            ctx.fillRect(-5, -4, 10, 8);
-            ctx.fillStyle = '#ffffff';
+            const seed = (tank.id.charCodeAt(0) || 1) * 3;
+            const waveT = (now / 140) + seed;
+            const w1 = Math.sin(waveT) * 1.8;
+            const w2 = Math.sin(waveT + 1.2) * 2.5;
+            const w3 = Math.sin(waveT + 2.4) * 1.6;
+
+            // Mast
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1.3;
+            ctx.beginPath();
+            ctx.moveTo(-7, -4);
+            ctx.lineTo(-7, -19);
+            ctx.stroke();
+            ctx.fillStyle = '#64748b';
+            ctx.beginPath();
+            ctx.arc(-7, -19, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Waving Black Flag
+            ctx.beginPath();
+            ctx.moveTo(-7, -18);
+            ctx.bezierCurveTo(-11, -18 + w1, -17, -18 + w2, -22, -18 + w3);
+            ctx.lineTo(-22, -9 + w3);
+            ctx.bezierCurveTo(-17, -9 + w2, -11, -9 + w1, -7, -9);
+            ctx.closePath();
+            ctx.fillStyle = '#090d16';
+            ctx.fill();
+            ctx.strokeStyle = '#475569';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+
+            // Skull symbol
+            const skullX = -14.5;
+            const skullY = -13.5 + (w1 + w2) / 2;
+            ctx.fillStyle = '#f8fafc';
             ctx.font = 'bold 7px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('☠', 0, 0.5);
+            ctx.fillText('☠', skullX, skullY);
+
             ctx.restore();
           } else if (decal === 'TIGER_BEAST') {
             // Icon Mãnh Hổ
@@ -1368,12 +1718,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           // --- 2.5D OVERHEAD HEALTH & TAG BAR (Floating above tank at Z = 42) ---
           ctx.globalAlpha = 1;
-          const barW = 48;
-          const barH = 5;
+          const barW = 52;
+          const barH = 5.5;
           const barY = -38;
 
           // Bar shadow
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
           ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
 
           // HP gauge
@@ -1385,13 +1735,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (tank.shield > 0) {
             const sPct = Math.min(1, tank.shield / 100);
             ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(-barW / 2, barY - 4, barW * sPct, 3);
+            ctx.fillRect(-barW / 2, barY - 4.5, barW * sPct, 3);
           }
+
+          // Distinct Roguelike EXP progress bar under HP bar
+          const expRatio = Math.max(0, Math.min(1, (tank.exp || 0) / (tank.maxExp || 75)));
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+          ctx.fillRect(-barW / 2 - 1, barY + barH + 1.5, barW + 2, 3.5);
+          const expGrad = ctx.createLinearGradient(-barW / 2, 0, barW / 2, 0);
+          expGrad.addColorStop(0, '#f59e0b');
+          expGrad.addColorStop(1, '#fde047');
+          ctx.fillStyle = expGrad;
+          ctx.fillRect(-barW / 2, barY + barH + 1.5, barW * expRatio, 3.5);
+
+          // MOBA-style Circular Hero Level Badge on the left of HP bar
+          const badgeX = -barW / 2 - 10;
+          const badgeY = barY + barH / 2;
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(badgeX, badgeY, 8.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#0f172a';
+          ctx.fill();
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          ctx.font = '900 9.5px Plus Jakarta Sans, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#fbbf24';
+          ctx.fillText(String(tank.level || 1), badgeX, badgeY + 0.5);
+          ctx.restore();
 
           // Commander name with distinct online indicator
           ctx.font = 'bold 11px Plus Jakarta Sans, sans-serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'bottom';
+
+          // Floating Perk Upgrade prompt if pending
+          if (tank.id === myPlayerId && tank.pendingPerkChoices && tank.pendingPerkChoices.length > 0) {
+            ctx.save();
+            ctx.font = 'bold 9px monospace';
+            ctx.fillStyle = '#fde047';
+            ctx.strokeStyle = '#78350f';
+            ctx.lineWidth = 3;
+            const perkAlert = '⭐ CÓ NÂNG CẤP KỸ NĂNG! ⭐';
+            ctx.strokeText(perkAlert, 0, barY - 18);
+            ctx.fillText(perkAlert, 0, barY - 18);
+            ctx.restore();
+          }
 
           const lvlTag = `[LV.${tank.level || 1}]`;
           if (tank.id === myPlayerId) {
@@ -2102,6 +2494,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = `rgba(224, 242, 254, ${lightningFlashRef.current * 0.35})`;
         ctx.fillRect(0, 0, width, height);
         lightningFlashRef.current = Math.max(0, lightningFlashRef.current - 0.08);
+      }
+
+      // Weather Atmospheric Peripheral Vignettes (Sandstorm Dust & Snow Frost)
+      if (currentWeather === 'DESERT') {
+        const sandPulse = 0.5 + Math.sin(now / 500) * 0.2;
+        const sandVignette = ctx.createRadialGradient(
+          width / 2,
+          height / 2,
+          Math.min(width, height) * 0.35,
+          width / 2,
+          height / 2,
+          Math.max(width, height) * 0.72
+        );
+        sandVignette.addColorStop(0, 'transparent');
+        sandVignette.addColorStop(0.7, `rgba(217, 119, 6, ${0.12 * sandPulse})`);
+        sandVignette.addColorStop(1, `rgba(180, 83, 9, ${0.28 * sandPulse})`);
+        ctx.fillStyle = sandVignette;
+        ctx.fillRect(0, 0, width, height);
+      } else if (currentWeather === 'SNOW') {
+        const snowVignette = ctx.createRadialGradient(
+          width / 2,
+          height / 2,
+          Math.min(width, height) * 0.4,
+          width / 2,
+          height / 2,
+          Math.max(width, height) * 0.75
+        );
+        snowVignette.addColorStop(0, 'transparent');
+        snowVignette.addColorStop(0.75, 'rgba(186, 230, 253, 0.08)');
+        snowVignette.addColorStop(1, 'rgba(224, 242, 254, 0.22)');
+        ctx.fillStyle = snowVignette;
+        ctx.fillRect(0, 0, width, height);
       }
 
       // Outside Storm Zone Screen Vignette Warning

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { PlayerTank, Obstacle, PowerUpCrate, StormZone, BossInfo, BaseZone } from '../types/game';
-import { X, Maximize2, Minimize2, MapPin, Target } from 'lucide-react';
+import { PlayerTank, Obstacle, PowerUpCrate, StormZone, BossInfo, BaseZone, WeatherType, WEATHER_CONFIGS } from '../types/game';
+import { X, Maximize2, Minimize2, MapPin, Target, EyeOff, Wind } from 'lucide-react';
 
 interface RadarMinimapProps {
   myPlayerId: string;
@@ -10,12 +10,19 @@ interface RadarMinimapProps {
   worldSize: { width: number; height: number };
   mode: 'small' | 'large';
   onSetMode: (mode: 'small' | 'large' | 'hidden') => void;
-  onFocusWorldPos?: (x: number, y: number) => void;
+  onFocusWorldPos?: (x: number, y: number, pingType?: 'ATTACK' | 'DEFEND' | 'GATHER') => void;
   cameraPos?: { x: number; y: number };
-  focusBeacon?: { x: number; y: number; timestamp: number } | null;
+  focusBeacon?: {
+    x: number;
+    y: number;
+    timestamp: number;
+    pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
+    senderName?: string;
+  } | null;
   storm?: StormZone | null;
   boss?: BossInfo | null;
   bases?: BaseZone[];
+  currentWeather?: WeatherType;
 }
 
 export const RadarMinimap: React.FC<RadarMinimapProps> = ({
@@ -32,8 +39,10 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
   storm,
   boss,
   bases = [],
+  currentWeather = 'DAWN',
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [selectedPingType, setSelectedPingType] = useState<'ATTACK' | 'DEFEND' | 'GATHER'>('ATTACK');
   const [isShortLandscape, setIsShortLandscape] = useState(() => typeof window !== 'undefined' && window.innerHeight <= 540);
 
   useEffect(() => {
@@ -215,35 +224,53 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
       }
 
       // Focus Ping Beacon (Expanding rings upon clicking map)
-      if (focusBeacon && now - focusBeacon.timestamp < 3500) {
+      if (focusBeacon && now - focusBeacon.timestamp < 3800) {
         const elapsed = (now - focusBeacon.timestamp) / 1000;
         const beaconX = focusBeacon.x * scaleX;
         const beaconY = focusBeacon.y * scaleY;
+        const pType = focusBeacon.pingType || 'ATTACK';
+        const beaconColor = pType === 'DEFEND' ? '#38bdf8' : pType === 'GATHER' ? '#10b981' : '#f59e0b';
+        const beaconBg = pType === 'DEFEND' ? 'rgba(56, 189, 248, ' : pType === 'GATHER' ? 'rgba(16, 185, 129, ' : 'rgba(245, 158, 11, ';
 
         ctx.save();
         for (let rIdx = 0; rIdx < 3; rIdx++) {
           const ringProgress = (elapsed + rIdx * 0.3) % 1;
-          const ringRadius = 4 + ringProgress * (isLarge ? 24 : 14);
+          const ringRadius = 4 + ringProgress * (isLarge ? 26 : 15);
           const ringAlpha = Math.max(0, 1 - ringProgress);
 
-          ctx.strokeStyle = `rgba(245, 158, 11, ${ringAlpha})`;
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = `${beaconBg}${ringAlpha})`;
+          ctx.lineWidth = 1.8;
           ctx.beginPath();
           ctx.arc(beaconX, beaconY, ringRadius, 0, Math.PI * 2);
           ctx.stroke();
         }
 
         // Crosshair marker
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = beaconColor;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(beaconX - 5, beaconY);
-        ctx.lineTo(beaconX + 5, beaconY);
-        ctx.moveTo(beaconX, beaconY - 5);
-        ctx.lineTo(beaconX, beaconY + 5);
+        ctx.moveTo(beaconX - 6, beaconY);
+        ctx.lineTo(beaconX + 6, beaconY);
+        ctx.moveTo(beaconX, beaconY - 6);
+        ctx.lineTo(beaconX, beaconY + 6);
         ctx.stroke();
+
+        // Label above beacon on minimap
+        ctx.fillStyle = beaconColor;
+        ctx.font = 'bold 8.5px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        const pLabel = pType === 'DEFEND' ? '🛡️ THỦ' : pType === 'GATHER' ? '🤝 HỢP' : '⚔️ CÔNG';
+        ctx.fillText(pLabel, beaconX, beaconY - 6);
+
         ctx.restore();
       }
+
+      // In DESERT weather: Sandstorm severely obscures radar visibility!
+      const isSandstorm = currentWeather === 'DESERT';
+      const radarMaxRange = 520;
+      const originX = myTank ? myTank.x : (cameraPos ? cameraPos.x : worldSize.width / 2);
+      const originY = myTank ? myTank.y : (cameraPos ? cameraPos.y : worldSize.height / 2);
 
       // Tanks
       for (const tank of tanks) {
@@ -253,6 +280,18 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
         const isMe = tank.id === myPlayerId;
 
         if (isMe) {
+          // If in sandstorm, draw the active radar detection boundary circle around myTank
+          if (isSandstorm) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+            ctx.lineWidth = isLarge ? 1.5 : 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.arc(tx, ty, radarMaxRange * scaleX, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+
           // My tank marker: Bright green pulsating star
           const pulse = (Math.sin(now / 200) + 1) * 1.5;
           ctx.fillStyle = 'rgba(16, 185, 129, 0.4)';
@@ -273,8 +312,24 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
           ctx.lineTo(tx + Math.cos(tank.turretAngle) * 9, ty + Math.sin(tank.turretAngle) * 9);
           ctx.stroke();
         } else {
-          // Opponents / Bots
-          ctx.fillStyle = tank.isBot ? '#ef4444' : '#38bdf8';
+          // Opponents / Bots / Teammates
+          const isSameTeam = myTank?.team && myTank.team !== 'NONE' && tank.team === myTank.team;
+
+          // Sandstorm Radar Limitation: Enemies beyond 520m are completely obscured on minimap!
+          if (isSandstorm && !isSameTeam) {
+            const distFromOrigin = Math.hypot(tank.x - originX, tank.y - originY);
+            if (distFromOrigin > radarMaxRange) {
+              // Out of radar detection range in the blinding sandstorm
+              continue;
+            }
+            if (distFromOrigin > radarMaxRange - 120) {
+              // Edge of radar detection: Static interference blip flicker
+              const staticFade = (radarMaxRange - distFromOrigin) / 120;
+              ctx.globalAlpha = Math.max(0.18, staticFade * (0.35 + 0.65 * Math.abs(Math.sin(now / 75 + tank.x))));
+            }
+          }
+
+          ctx.fillStyle = isSameTeam ? '#38bdf8' : (tank.isBot ? '#ef4444' : '#f97316');
           ctx.beginPath();
           ctx.arc(tx, ty, 3, 0, Math.PI * 2);
           ctx.fill();
@@ -285,7 +340,34 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
             ctx.textAlign = 'center';
             ctx.fillText(tank.name.slice(0, 10), tx, ty - 7);
           }
+
+          ctx.globalAlpha = 1.0;
         }
+      }
+
+      // Dynamic Weather Environmental Effects on Minimap
+      if (isSandstorm) {
+        ctx.save();
+        // Swirling Sandstorm Particle Dust across Minimap
+        for (let p = 0; p < (isLarge ? 28 : 14); p++) {
+          const px = ((now * 0.08 + p * 41) % (size + 30)) - 15;
+          const py = (p * 27 + Math.sin(now / 400 + p) * 14) % size;
+          ctx.fillStyle = p % 2 === 0 ? 'rgba(245, 158, 11, 0.32)' : 'rgba(217, 119, 6, 0.22)';
+          ctx.beginPath();
+          ctx.arc(px, py, (p % 2) + 0.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Sandstorm radar static scanlines
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.05)';
+        ctx.fillRect(0, 0, size, size);
+        ctx.restore();
+      } else if (currentWeather === 'SNOW') {
+        // Frost shimmer on minimap
+        ctx.save();
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.15)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(2, 2, size - 4, size - 4);
+        ctx.restore();
       }
 
       // World Boss Leviathan in Minimap
@@ -353,7 +435,8 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
 
     onFocusWorldPos(
       Math.max(50, Math.min(worldSize.width - 50, targetWorldX)),
-      Math.max(50, Math.min(worldSize.height - 50, targetWorldY))
+      Math.max(50, Math.min(worldSize.height - 50, targetWorldY)),
+      selectedPingType
     );
   };
 
@@ -375,39 +458,58 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
   // If Map To: Render as Centered Dialog Modal
   if (isLarge) {
     return (
-      <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
-        <div className="bg-slate-900 border border-sky-500/50 rounded-2xl w-full max-w-xl p-4 sm:p-5 shadow-2xl space-y-3">
+      <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in zoom-in-95 duration-150 select-none">
+        <div className={`bg-slate-900 border border-sky-500/50 rounded-2xl w-full max-w-lg shadow-2xl my-auto ${
+          isShortLandscape ? 'p-2.5 space-y-2 max-h-[82vh]' : 'p-3.5 sm:p-5 space-y-3 max-h-[85vh]'
+        } overflow-y-auto custom-scrollbar`}>
           {/* Dialog Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-sky-500/20 text-sky-400 rounded-xl border border-sky-500/30">
-                <MapPin className="w-5 h-5" />
+          <div className={`flex items-center justify-between border-b border-slate-800 ${isShortLandscape ? 'pb-1.5' : 'pb-2.5'}`}>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <div className={`${isShortLandscape ? 'p-1' : 'p-1.5 sm:p-2'} bg-sky-500/20 text-sky-400 rounded-xl border border-sky-500/30`}>
+                <MapPin className={isShortLandscape ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} />
               </div>
               <div>
-                <h3 className="font-mono font-bold text-white text-base sm:text-lg flex items-center gap-2">
-                  <span>BẢN ĐỒ CHIẾN THUẬT TOÀN CẢNH</span>
-                  <span className="text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded font-mono">
-                    4200 x 4200
-                  </span>
-                </h3>
-                <p className="text-xs text-sky-300 font-semibold flex items-center gap-1.5 mt-0.5">
-                  <Target className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>Click hoặc giữ chuột kéo trên bản đồ để lập tức di chuyển camera quan sát đến vị trí đó!</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h3 className={`font-mono font-bold text-white flex items-center gap-1.5 ${
+                    isShortLandscape ? 'text-xs' : 'text-xs sm:text-sm md:text-base'
+                  }`}>
+                    <span>BẢN ĐỒ CHIẾN THUẬT</span>
+                    <span className="text-[8px] sm:text-[9.5px] bg-sky-500/20 text-sky-300 border border-sky-500/30 px-1.5 py-0.2 rounded font-mono">
+                      4200 x 4200
+                    </span>
+                  </h3>
+                  {currentWeather === 'DESERT' && (
+                    <span className="flex items-center gap-1 text-[8.5px] sm:text-[9.5px] bg-amber-500/25 text-amber-300 border border-amber-500/50 px-1.5 py-0.2 rounded font-bold animate-pulse">
+                      <Wind className="w-2.5 h-2.5" />
+                      <span>BÃO CÁT (RADAR 520M)</span>
+                    </span>
+                  )}
+                  {currentWeather === 'SNOW' && (
+                    <span className="flex items-center gap-1 text-[8.5px] sm:text-[9.5px] bg-sky-500/20 text-sky-200 border border-sky-400/40 px-1.5 py-0.2 rounded font-bold">
+                      <span>❄️ BĂNG TRƠN TRƯỢT</span>
+                    </span>
+                  )}
+                </div>
+                <p className={`text-sky-300 font-semibold flex items-center gap-1 mt-0.5 ${
+                  isShortLandscape ? 'text-[8.5px]' : 'text-[9.5px] sm:text-xs'
+                }`}>
+                  <Target className="w-3 h-3 text-amber-400 shrink-0" />
+                  <span>Click hoặc giữ chuột kéo trên map để lia camera quan sát</span>
                 </p>
               </div>
             </div>
 
             <button
               onClick={() => onSetMode('hidden')}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
               title="Đóng bản đồ (Phím M / Esc)"
             >
-              <X className="w-5 h-5" />
+              <X className={isShortLandscape ? 'w-3.5 h-3.5' : 'w-4 h-4 sm:w-5 sm:h-5'} />
             </button>
           </div>
 
           {/* Canvas Centerpiece */}
-          <div className="flex justify-center items-center bg-slate-950 p-2 rounded-xl border border-slate-800 relative group">
+          <div className="flex justify-center items-center bg-slate-950 p-1.5 sm:p-2 rounded-xl border border-slate-800 relative group">
             <canvas
               ref={canvasRef}
               width={size}
@@ -420,39 +522,88 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
             />
           </div>
 
+          {/* Tactical Beacon Mode Selector */}
+          <div className="flex items-center justify-between gap-1.5 px-1 py-0.5">
+            <span className="text-[10px] font-mono text-slate-400 font-bold hidden sm:inline">Chế độ Ping:</span>
+            <div className="flex items-center gap-1.5 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => setSelectedPingType('ATTACK')}
+                className={`flex-1 sm:flex-initial px-2.5 py-1 rounded-lg font-mono text-[10px] sm:text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  selectedPingType === 'ATTACK'
+                    ? 'bg-amber-500/25 text-amber-300 border-amber-500/60 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <span>⚔️</span>
+                <span>TẤN CÔNG</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedPingType('DEFEND')}
+                className={`flex-1 sm:flex-initial px-2.5 py-1 rounded-lg font-mono text-[10px] sm:text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  selectedPingType === 'DEFEND'
+                    ? 'bg-sky-500/25 text-sky-300 border-sky-500/60 shadow-md shadow-sky-500/20'
+                    : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <span>🛡️</span>
+                <span>PHÒNG THỦ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedPingType('GATHER')}
+                className={`flex-1 sm:flex-initial px-2.5 py-1 rounded-lg font-mono text-[10px] sm:text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  selectedPingType === 'GATHER'
+                    ? 'bg-emerald-500/25 text-emerald-300 border-emerald-500/60 shadow-md shadow-emerald-500/20'
+                    : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <span>🤝</span>
+                <span>TẬP HỢP</span>
+              </button>
+            </div>
+          </div>
+
           {/* Legend and Status Footer */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80">
-            <div className="flex items-center gap-1.5 text-emerald-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-              <span>Xe Của Bạn</span>
+          <div className={`grid grid-cols-2 sm:grid-cols-4 gap-1.5 font-mono bg-slate-950/70 rounded-xl border border-slate-800/80 ${
+            isShortLandscape ? 'p-1.5 text-[8.5px]' : 'p-2 sm:p-2.5 text-[9.5px] sm:text-[11px]'
+          }`}>
+            <div className="flex items-center gap-1 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+              <span className="truncate">Xe Của Bạn</span>
             </div>
-            <div className="flex items-center gap-1.5 text-sky-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse" />
-              <span>Đối Thủ Online</span>
+            <div className="flex items-center gap-1 text-sky-400">
+              <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse shrink-0" />
+              <span className="truncate">Đối Thủ</span>
             </div>
-            <div className="flex items-center gap-1.5 text-rose-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
-              <span>Bot AI</span>
+            <div className="flex items-center gap-1 text-rose-400">
+              <span className="w-2 h-2 rounded-full bg-rose-400 shrink-0" />
+              <span className="truncate">Bot AI</span>
             </div>
-            <div className="flex items-center gap-1.5 text-amber-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-              <span>Hộp Tiếp Tế</span>
+            <div className="flex items-center gap-1 text-amber-400">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              <span className="truncate">Tiếp Tế</span>
             </div>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center justify-between pt-0.5 gap-2">
             <button
               onClick={() => onSetMode('small')}
-              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-700 transition-colors cursor-pointer"
+              className={`flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-semibold border border-slate-700 transition-colors cursor-pointer ${
+                isShortLandscape ? 'px-2 py-1 text-[9px]' : 'px-2.5 sm:px-3 py-1.5 text-[10px] sm:text-xs'
+              }`}
             >
-              <Minimize2 className="w-3.5 h-3.5 text-sky-400" />
-              <span>Thu Nhỏ Về Góc Trái (Phím M)</span>
+              <Minimize2 className="w-3 h-3 text-sky-400 shrink-0" />
+              <span>Thu Nhỏ (M)</span>
             </button>
 
             <button
               onClick={() => onSetMode('hidden')}
-              className="flex items-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold px-4 py-1.5 rounded-xl text-xs transition-colors cursor-pointer shadow-md"
+              className={`flex items-center gap-1 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl transition-colors cursor-pointer shadow-md ${
+                isShortLandscape ? 'px-3 py-1 text-[9.5px]' : 'px-3.5 sm:px-4 py-1.5 text-[10px] sm:text-xs'
+              }`}
             >
               <span>Đóng Bản Đồ (Esc)</span>
             </button>
@@ -473,6 +624,16 @@ export const RadarMinimap: React.FC<RadarMinimapProps> = ({
         <div className="flex items-center gap-1 text-sky-400 font-bold">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>RADAR</span>
+          {currentWeather === 'DESERT' && (
+            <span className="text-[7.5px] sm:text-[8px] text-amber-300 bg-amber-500/25 border border-amber-500/40 px-1 py-0.2 rounded font-mono font-bold animate-pulse" title="Bão cát làm giảm tầm nhìn radar còn 520m">
+              520M
+            </span>
+          )}
+          {currentWeather === 'SNOW' && (
+            <span className="text-[7.5px] sm:text-[8px] text-sky-300 bg-sky-500/20 border border-sky-400/30 px-1 py-0.2 rounded font-mono font-bold" title="Băng trơn trượt nhẹ">
+              ❄️
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-0.5">

@@ -1,3 +1,4 @@
+import { recordMatchCompletion, getPlayerStats, PlayerRecordStats } from './utils/playerStats';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -18,6 +19,7 @@ import {
   ServerMessage,
   GameMode,
   PublicPlayerInfo,
+  CustomRoomSummary,
   TANK_CLASSES,
   WeatherType,
   WEATHER_CONFIGS,
@@ -37,6 +39,10 @@ import {
   TANK_SKINS,
   BULLET_TRAILS,
   ROOF_DECALS,
+  MatchType,
+  RankTier,
+  getRankFromRp,
+  QueueMatchedPlayer,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -52,12 +58,19 @@ import { VirtualJoystick } from './components/VirtualJoystick';
 import { SkillBarHUD } from './components/SkillBarHUD';
 import { PerkSelectModal } from './components/PerkSelectModal';
 import { GarageModal } from './components/GarageModal';
+import { FriendsModal } from './components/FriendsModal';
+import { MatchmakingModal } from './components/MatchmakingModal';
+import { InGameSettingsModal } from './components/InGameSettingsModal';
+import { AccountModal } from './components/AccountModal';
+import { UserAccount, getCurrentUser, saveCurrentUser } from './utils/auth';
 import { OrientationGuard } from './components/OrientationGuard';
 import { sounds } from './utils/audio';
+import { haptics } from './utils/haptics';
 import {
   Volume2,
   VolumeX,
   Palette,
+  Gamepad2,
   Music,
   Sliders,
   Radio,
@@ -90,6 +103,9 @@ import {
   Skull,
   Flame,
   Heart,
+  Smartphone,
+  Settings,
+  MessageSquare,
 } from 'lucide-react';
 
 export default function App() {
@@ -97,6 +113,13 @@ export default function App() {
   const [myPlayerId, setMyPlayerId] = useState<string>('');
   const [worldSize, setWorldSize] = useState({ width: 4200, height: 4200 });
   const [is25DMode, setIs25DMode] = useState(true);
+  const [isMobilePortrait, setIsMobilePortrait] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const isSmall = window.innerWidth <= 768;
+    return isPortrait && (isSmall || isTouch);
+  });
   const [isShortLandscape, setIsShortLandscape] = useState(() => {
     return typeof window !== 'undefined' && window.innerHeight <= 560 && window.innerWidth > window.innerHeight;
   });
@@ -125,18 +148,35 @@ export default function App() {
     totalSockets: number;
     publicOnlineCount: number;
     publicPlayers: PublicPlayerInfo[];
+    customRooms?: CustomRoomSummary[];
   }>({
     totalSockets: 0,
     publicOnlineCount: 0,
     publicPlayers: [],
+    customRooms: [],
   });
   const [recentCombatEvent, setRecentCombatEvent] = useState<CombatEvent | null>(null);
 
   // Show/Hide UI Toggles
+  // On mobile: ONLY the small map is displayed by default; notifications (killfeed),
+  // lists (leaderboard/scoreboard), and detailed stats are hidden until user taps their buttons.
+  const isMobileDevice = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      'ontouchstart' in window ||
+      navigator.maxTouchPoints > 0 ||
+      window.innerWidth <= 768 ||
+      (window.innerHeight <= 560 && window.innerWidth > window.innerHeight)
+    );
+  }, []);
+
+  const [isMobile, setIsMobile] = useState(() => isMobileDevice());
+  const lastReadChatCountRef = useRef(0);
+
   const [showTopBar, setShowTopBar] = useState(true);
   const [mapMode, setMapMode] = useState<'small' | 'large' | 'hidden'>('small');
-  const [showLeaderboard, setShowLeaderboard] = useState(true);
-  const [showStats, setShowStats] = useState(true);
+  const [showLeaderboard, setShowLeaderboard] = useState(() => !isMobileDevice());
+  const [showStats, setShowStats] = useState(() => !isMobileDevice());
   const [showKillfeed, setShowKillfeed] = useState(true);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
@@ -161,9 +201,60 @@ export default function App() {
 
   const [isScoreboardOpen, setIsScoreboardOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+
+  const unreadChatCount = isChatOpen
+    ? 0
+    : Math.max(0, chatMessages.length - lastReadChatCountRef.current);
+
+  useEffect(() => {
+    if (isChatOpen) {
+      lastReadChatCountRef.current = chatMessages.length;
+    }
+  }, [isChatOpen, chatMessages.length]);
+
   const [isControlsModalOpen, setIsControlsModalOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(sounds.getIsMuted());
   const [botCount, setBotCount] = useState(7);
+
+  // Match Category: Ranked (RP) vs Casual
+  const [matchType, setMatchType] = useState<MatchType>('CASUAL');
+  const [playerRankRp, setPlayerRankRp] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('tank_player_rp');
+      return saved ? Number(saved) : 850;
+    } catch {
+      return 850;
+    }
+  });
+  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
+
+  // 6-Player 3v3 Matchmaking Queue State
+  const [queueStatus, setQueueStatus] = useState<{
+    inQueue: boolean;
+    matchType: MatchType;
+    currentCount: number;
+    targetCount: number;
+    elapsedSeconds: number;
+    estimatedSeconds: number;
+    players: QueueMatchedPlayer[];
+  }>({
+    inQueue: false,
+    matchType: 'CASUAL',
+    currentCount: 0,
+    targetCount: 6,
+    elapsedSeconds: 0,
+    estimatedSeconds: 30,
+    players: [],
+  });
+
+  const [matchFoundData, setMatchFoundData] = useState<{
+    matchType: MatchType;
+    roomId: string;
+    myTeam: Team;
+    redTeam: QueueMatchedPlayer[];
+    blueTeam: QueueMatchedPlayer[];
+    countdown: number;
+  } | null>(null);
 
   // Cosmetics & Workshop state
   const [userSkin, setUserSkin] = useState<TankSkinId>(() => (localStorage.getItem('tank_skin') as TankSkinId) || 'DEFAULT');
@@ -171,7 +262,8 @@ export default function App() {
   const [userDecal, setUserDecal] = useState<RoofDecalId>(() => (localStorage.getItem('tank_decal') as RoofDecalId) || 'FLAG_VIETNAM');
   const [isGarageOpen, setIsGarageOpen] = useState(false);
 
-  // Audio Settings & BGM state
+  // Audio Settings & In-Game Settings Modal state
+  const [isInGameSettingsOpen, setIsInGameSettingsOpen] = useState(false);
   const [isAudioSettingsOpen, setIsAudioSettingsOpen] = useState(false);
   const [musicVol, setMusicVol] = useState(Math.round(sounds.getMusicVolume() * 100));
   const [sfxVol, setSfxVol] = useState(Math.round(sounds.getSfxVolume() * 100));
@@ -186,13 +278,40 @@ export default function App() {
     icon: string;
     description: string;
     themeColor: string;
+    tacticalTitle?: string;
+    tacticalDesc?: string;
   } | null>(null);
+
+  // User Account & Google Cloud Auth (Show login modal immediately on first visit)
+  const [currentUser, setCurrentUser] = useState<UserAccount>(() => getCurrentUser());
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState<boolean>(() => {
+    try {
+      const hasSeenLogin = localStorage.getItem('tank_auth_initial_shown');
+      return !hasSeenLogin;
+    } catch {
+      return true;
+    }
+  });
+  const [accountToast, setAccountToast] = useState<{ show: boolean; text: string } | null>(null);
+  const [homePageTab, setHomePageTab] = useState<'home' | 'profile' | 'modes' | 'arsenal' | 'garage' | 'medals' | 'settings'>('home');
 
   // Spectator & Free Camera Panning States
   const [isSpectator, setIsSpectator] = useState(false);
   const [spectatorTargetId, setSpectatorTargetId] = useState<string | 'free'>('free');
   const [freeCameraPos, setFreeCameraPos] = useState({ x: 2100, y: 2100 });
-  const [focusBeacon, setFocusBeacon] = useState<{ x: number; y: number; timestamp: number } | null>(null);
+  const [focusBeacon, setFocusBeacon] = useState<{
+    x: number;
+    y: number;
+    timestamp: number;
+    pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
+    senderName?: string;
+  } | null>(null);
+  const [beaconAlert, setBeaconAlert] = useState<{
+    senderName: string;
+    pingLabel: string;
+    pingType: 'ATTACK' | 'DEFEND' | 'GATHER';
+    timestamp: number;
+  } | null>(null);
   const [isFreeCameraActive, setIsFreeCameraActive] = useState(false);
 
   // Tank Aiming & Firing Mode: 'MOVEMENT' (Classic Tank 1990) | 'MOUSE' (Modern 360°)
@@ -253,25 +372,60 @@ export default function App() {
     skinId?: TankSkinId;
     bulletTrail?: BulletTrailId;
     roofDecal?: RoofDecalId;
+    matchType?: MatchType;
+    rankTier?: RankTier;
+    rankRp?: number;
   }>({
-    name: 'Chỉ Huy',
+    name: currentUser?.name || 'Chỉ Huy',
     color: '#2563eb',
     tankClass: 'STRIKER',
     mode: 'PUBLIC',
     botCount: 5,
     roomId: 'public',
+    matchType: 'CASUAL',
+    rankRp: 850,
   });
 
-  // Keep isInGameRef synchronized
+  // Synchronize profileRef.current.name with currentUser.name whenever logged-in user changes
+  useEffect(() => {
+    if (currentUser?.name) {
+      profileRef.current.name = currentUser.name;
+    }
+  }, [currentUser?.name]);
+
+  // Keep player RP synchronized from live tank state
+  useEffect(() => {
+    const myTank = tanks.find((t) => t.id === myPlayerId);
+    if (myTank && typeof myTank.rankRp === 'number' && myTank.rankRp !== playerRankRp) {
+      setPlayerRankRp(myTank.rankRp);
+      try {
+        localStorage.setItem('tank_player_rp', String(myTank.rankRp));
+      } catch {
+        // ignore
+      }
+    }
+  }, [tanks, myPlayerId, playerRankRp]);
+
+  // Keep isInGameRef synchronized and ensure clean mobile HUD on battle start
   useEffect(() => {
     isInGameRef.current = isInGame;
-  }, [isInGame]);
+    if (isInGame && isMobileDevice()) {
+      setShowLeaderboard(false);
+      setShowKillfeed(false);
+      setShowStats(false);
+    }
+  }, [isInGame, isMobileDevice]);
 
   // Viewport resize tracking for short landscape mobile scaling
   useEffect(() => {
     const handleViewport = () => {
-      const isShort = window.innerHeight <= 560 && window.innerWidth > window.innerHeight;
+      const isPortrait = window.innerHeight > window.innerWidth;
+      const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const isSmall = window.innerWidth <= 768;
+      setIsMobilePortrait(isPortrait && (isSmall || isTouch));
+      const isShort = window.innerHeight <= 620 && window.innerWidth > window.innerHeight;
       setIsShortLandscape(isShort);
+      setIsMobile(isTouch || isSmall || (window.innerHeight <= 620 && window.innerWidth > window.innerHeight));
     };
     handleViewport();
     window.addEventListener('resize', handleViewport);
@@ -281,6 +435,24 @@ export default function App() {
       window.removeEventListener('orientationchange', handleViewport);
     };
   }, []);
+
+  // Yêu cầu: Khi switch qua màn dọc thì ngắt kết nối vào lại home page
+  useEffect(() => {
+    if (isInGame && isMobilePortrait) {
+      sounds.stopBgm();
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'LEAVE' }));
+      }
+      setIsInGame(false);
+      setIsSpectator(false);
+      setIsFreeCameraActive(false);
+      setAccountToast({
+        show: true,
+        text: '📱 Đã ngắt kết nối và quay lại trang chủ do chuyển sang màn hình dọc.',
+      });
+      setTimeout(() => setAccountToast(null), 4000);
+    }
+  }, [isInGame, isMobilePortrait]);
 
   const prevBossAliveRef = useRef(false);
 
@@ -298,11 +470,13 @@ export default function App() {
               icon: cfg.icon,
               description: cfg.description,
               themeColor: cfg.themeColor,
+              tacticalTitle: cfg.tacticalEffectTitle,
+              tacticalDesc: cfg.tacticalEffectDesc,
             });
             sounds.playPowerUp();
             sounds.announce(
               `Weather change: ${cfg.name}`,
-              `Thời tiết chiến trường: ${cfg.vietnameseName}! ${cfg.description}`
+              `Thời tiết chiến trường: ${cfg.vietnameseName}! ${cfg.tacticalEffectTitle}. ${cfg.tacticalEffectDesc}`
             );
             return nextIdx;
           });
@@ -405,18 +579,44 @@ export default function App() {
         icon: cfg.icon,
         description: cfg.description,
         themeColor: cfg.themeColor,
+        tacticalTitle: cfg.tacticalEffectTitle,
+        tacticalDesc: cfg.tacticalEffectDesc,
       });
       sounds.playPowerUp();
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'SET_WEATHER', weather: nextWeatherType }));
+      }
       return nextIdx;
     });
     setWeatherSecondsLeft(60);
   };
 
-  const handleFocusWorldPos = (x: number, y: number) => {
+  const handleFocusWorldPos = (
+    x: number,
+    y: number,
+    pingType: 'ATTACK' | 'DEFEND' | 'GATHER' = 'ATTACK'
+  ) => {
     setFreeCameraPos({ x, y });
     setIsFreeCameraActive(true);
-    setFocusBeacon({ x, y, timestamp: Date.now() });
+    setFocusBeacon({
+      x,
+      y,
+      timestamp: Date.now(),
+      pingType,
+      senderName: profileRef.current.name,
+    });
     sounds.playPowerUp();
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: 'TEAM_PING',
+          x,
+          y,
+          pingType,
+        })
+      );
+    }
   };
 
   const handlePanCamera = (camX: number, camY: number) => {
@@ -460,6 +660,17 @@ export default function App() {
         sounds.playShoot(true);
         sounds.announce('Artillery Barrage Fired!', 'Khai hỏa Bão Lửa Pháo Kích!');
       }
+    }
+  };
+
+  const handleUpgradeSkill = (skill: SkillType) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      const msg: ClientMessage = {
+        type: 'UPGRADE_SKILL',
+        skill,
+      };
+      socketRef.current.send(JSON.stringify(msg));
+      sounds.playPowerUp();
     }
   };
 
@@ -519,6 +730,7 @@ export default function App() {
                 totalSockets: msg.totalSockets,
                 publicOnlineCount: msg.publicOnlineCount,
                 publicPlayers: msg.publicPlayers || [],
+                customRooms: msg.customRooms || [],
               });
               break;
             }
@@ -535,6 +747,7 @@ export default function App() {
 
               // Unpack Game Mode State
               if (msg.snapshot.storm) setStorm(msg.snapshot.storm);
+              if (msg.snapshot.teamScore) setTeamScore(msg.snapshot.teamScore);
               if (msg.snapshot.teamScore) setTeamScore(msg.snapshot.teamScore);
               setBoss(msg.snapshot.boss || null);
               if (msg.snapshot.bases) setBases(msg.snapshot.bases);
@@ -583,6 +796,27 @@ export default function App() {
               if (msg.snapshot.totalParticipants !== undefined) setTotalParticipants(msg.snapshot.totalParticipants);
               setBrWinner(msg.snapshot.brWinner || null);
               if (msg.snapshot.mode) setGameMode(msg.snapshot.mode);
+
+              // Synchronize authoritative weather from server snapshot
+              if (msg.snapshot.weather) {
+                const w = msg.snapshot.weather;
+                const wIdx = WEATHER_CYCLE.indexOf(w);
+                if (wIdx !== -1 && wIdx !== currentWeatherIndex) {
+                  setCurrentWeatherIndex(wIdx);
+                  const cfg = WEATHER_CONFIGS[w];
+                  setWeatherToast({
+                    name: cfg.vietnameseName,
+                    icon: cfg.icon,
+                    description: cfg.description,
+                    themeColor: cfg.themeColor,
+                    tacticalTitle: cfg.tacticalEffectTitle,
+                    tacticalDesc: cfg.tacticalEffectDesc,
+                  });
+                }
+              }
+              if (typeof msg.snapshot.weatherSecondsLeft === 'number') {
+                setWeatherSecondsLeft(msg.snapshot.weatherSecondsLeft);
+              }
               break;
             }
 
@@ -624,6 +858,60 @@ export default function App() {
             case 'PONG': {
               const rtt = Date.now() - msg.clientTimestamp;
               setPing(rtt);
+              break;
+            }
+
+            case 'QUEUE_STATUS': {
+              setQueueStatus({
+                inQueue: msg.inQueue,
+                matchType: msg.matchType,
+                currentCount: msg.currentCount,
+                targetCount: msg.targetCount,
+                elapsedSeconds: msg.elapsedSeconds,
+                estimatedSeconds: msg.estimatedSeconds,
+                players: msg.players || [],
+              });
+              if (!msg.inQueue) {
+                setMatchFoundData(null);
+              }
+              break;
+            }
+
+            case 'QUEUE_MATCH_FOUND': {
+              setMatchFoundData({
+                matchType: msg.matchType,
+                roomId: msg.roomId,
+                myTeam: msg.myTeam,
+                redTeam: msg.redTeam,
+                blueTeam: msg.blueTeam,
+                countdown: msg.countdown || 3,
+              });
+              sounds.playPowerUp();
+              sounds.announce('Match Found! Preparing for battle...', 'Trận đấu 6 người đã tìm thấy! Chuẩn bị xung trận!');
+              break;
+            }
+
+            case 'TEAM_BEACON': {
+              setFocusBeacon({
+                x: msg.x,
+                y: msg.y,
+                timestamp: msg.timestamp,
+                pingType: msg.pingType || 'ATTACK',
+                senderName: msg.senderName,
+              });
+              sounds.playRadioBeep();
+              const pingLabel =
+                msg.pingType === 'DEFEND'
+                  ? 'PHÒNG THỦ VỊ TRÍ'
+                  : msg.pingType === 'GATHER'
+                  ? 'TẬP HỢP ĐỘI HÌNH'
+                  : 'TẬP TRUNG HỎA LỰC';
+              setBeaconAlert({
+                senderName: msg.senderName,
+                pingLabel,
+                pingType: msg.pingType || 'ATTACK',
+                timestamp: Date.now(),
+              });
               break;
             }
           }
@@ -817,6 +1105,40 @@ export default function App() {
         }
       }
 
+      // Hotkeys to Upgrade Skills (Cộng chiêu thức): 1 (Boost), 2 (Shield), 3 (Mine), 4 (Barrage)
+      if (k === '1' || (e.ctrlKey && k === '1')) {
+        const myT = tanks.find((t) => t.id === myPlayerId);
+        if (myT && (myT.skillPoints || 0) > 0) {
+          e.preventDefault();
+          handleUpgradeSkill('BOOST');
+          return;
+        }
+      }
+      if (k === '2' || (e.ctrlKey && k === '2')) {
+        const myT = tanks.find((t) => t.id === myPlayerId);
+        if (myT && (myT.skillPoints || 0) > 0) {
+          e.preventDefault();
+          handleUpgradeSkill('SHIELD');
+          return;
+        }
+      }
+      if (k === '3' || (e.ctrlKey && k === '3')) {
+        const myT = tanks.find((t) => t.id === myPlayerId);
+        if (myT && (myT.skillPoints || 0) > 0) {
+          e.preventDefault();
+          handleUpgradeSkill('MINE');
+          return;
+        }
+      }
+      if (k === '4' || (e.ctrlKey && k === '4')) {
+        const myT = tanks.find((t) => t.id === myPlayerId);
+        if (myT && (myT.skillPoints || 0) > 0) {
+          e.preventDefault();
+          handleUpgradeSkill('BARRAGE');
+          return;
+        }
+      }
+
       // Tactical Skill Shortcuts: Shift (Boost), Q/F (Shield), E (Mine), R (Barrage)
       if (e.key === 'Shift' || k === 'shift') {
         e.preventDefault();
@@ -998,8 +1320,20 @@ export default function App() {
     team?: Team,
     skinId?: TankSkinId,
     bulletTrail?: BulletTrailId,
-    roofDecal?: RoofDecalId
+    roofDecal?: RoofDecalId,
+    chosenMatchType?: MatchType,
+    enableBoss?: boolean,
+    bossHp?: number,
+    initialWeather?: WeatherType
   ) => {
+    // Mobile Portrait Guard: Block entering game on portrait mode
+    if (isMobilePortrait) {
+      sounds.playRadioBeep();
+      return;
+    }
+
+    const finalMatchType = chosenMatchType || matchType;
+    setMatchType(finalMatchType);
     setGameMode(mode);
     setBotCount(selectedBots);
     setIsSpectator(spectator);
@@ -1014,6 +1348,7 @@ export default function App() {
     const finalSkin = skinId || userSkin;
     const finalTrail = bulletTrail || userTrail;
     const finalDecal = roofDecal || userDecal;
+    const currentRank = getRankFromRp(playerRankRp);
 
     profileRef.current = {
       name,
@@ -1026,6 +1361,9 @@ export default function App() {
       skinId: finalSkin,
       bulletTrail: finalTrail,
       roofDecal: finalDecal,
+      matchType: finalMatchType,
+      rankTier: currentRank.tier,
+      rankRp: playerRankRp,
     };
 
     // Auto-start procedural epic military battle BGM
@@ -1046,6 +1384,12 @@ export default function App() {
           skinId: finalSkin,
           bulletTrail: finalTrail,
           roofDecal: finalDecal,
+          matchType: finalMatchType,
+          rankTier: currentRank.tier,
+          rankRp: playerRankRp,
+          enableBoss,
+          bossHp,
+          initialWeather,
         };
         socketRef.current.send(JSON.stringify(joinMsg));
       }
@@ -1073,13 +1417,41 @@ export default function App() {
     setUserSkin(cosmetics.skinId);
     setUserTrail(cosmetics.bulletTrail);
     setUserDecal(cosmetics.roofDecal);
-    localStorage.setItem('tank_skin', cosmetics.skinId);
-    localStorage.setItem('tank_trail', cosmetics.bulletTrail);
-    localStorage.setItem('tank_decal', cosmetics.roofDecal);
-
+    try {
+      localStorage.setItem('tank_skin', cosmetics.skinId);
+      localStorage.setItem('tank_trail', cosmetics.bulletTrail);
+      localStorage.setItem('tank_decal', cosmetics.roofDecal);
+    } catch (err) {
+      console.warn('Failed to save to localStorage:', err);
+    }
     profileRef.current.skinId = cosmetics.skinId;
     profileRef.current.bulletTrail = cosmetics.bulletTrail;
     profileRef.current.roofDecal = cosmetics.roofDecal;
+
+    // Immediately update local tank state if alive/in-game
+    setTanks((prev) =>
+      prev.map((t) =>
+        t.id === myPlayerId
+          ? {
+              ...t,
+              skinId: cosmetics.skinId,
+              bulletTrail: cosmetics.bulletTrail,
+              roofDecal: cosmetics.roofDecal,
+            }
+          : t
+      )
+    );
+
+    if (currentUser) {
+      const updatedUser: UserAccount = {
+        ...currentUser,
+        skinId: cosmetics.skinId,
+        bulletTrail: cosmetics.bulletTrail,
+        roofDecal: cosmetics.roofDecal,
+      };
+      setCurrentUser(updatedUser);
+      saveCurrentUser(updatedUser);
+    }
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(
@@ -1125,6 +1497,122 @@ export default function App() {
     }
   };
 
+
+
+  // Auto-join match when 6 players are found and countdown completes
+  useEffect(() => {
+    if (!matchFoundData) return;
+
+    const timer = setTimeout(() => {
+      handleJoinGame(
+        profileRef.current.name,
+        profileRef.current.color,
+        profileRef.current.tankClass,
+        'TEAM_DEATHMATCH',
+        0,
+        matchFoundData.roomId,
+        false,
+        matchFoundData.myTeam,
+        profileRef.current.skinId || userSkin,
+        profileRef.current.bulletTrail || userTrail,
+        profileRef.current.roofDecal || userDecal,
+        matchFoundData.matchType
+      );
+      setMatchFoundData(null);
+      setQueueStatus((prev) => ({ ...prev, inQueue: false }));
+    }, (matchFoundData.countdown || 3) * 1000);
+
+    return () => clearTimeout(timer);
+  }, [matchFoundData]);
+
+  const handleStartQueue = (
+    chosenMatchType: MatchType,
+    playerName: string,
+    playerColor: string,
+    playerTankClass: TankClass,
+    chosenSkin?: TankSkinId,
+    chosenTrail?: BulletTrailId,
+    chosenDecal?: RoofDecalId
+  ) => {
+    if (isMobilePortrait) {
+      sounds.playRadioBeep();
+      return;
+    }
+    const finalSkin = chosenSkin || userSkin;
+    const finalTrail = chosenTrail || userTrail;
+    const finalDecal = chosenDecal || userDecal;
+
+    if (chosenSkin) setUserSkin(chosenSkin);
+    if (chosenTrail) setUserTrail(chosenTrail);
+    if (chosenDecal) setUserDecal(chosenDecal);
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      setMatchType(chosenMatchType);
+      profileRef.current.name = playerName;
+      profileRef.current.color = playerColor;
+      profileRef.current.tankClass = playerTankClass;
+      profileRef.current.matchType = chosenMatchType;
+      profileRef.current.skinId = finalSkin;
+      profileRef.current.bulletTrail = finalTrail;
+      profileRef.current.roofDecal = finalDecal;
+      profileRef.current.rankTier = getRankFromRp(playerRankRp).tier;
+      profileRef.current.rankRp = playerRankRp;
+
+      const queueMsg: ClientMessage = {
+        type: 'QUEUE_JOIN',
+        matchType: chosenMatchType,
+        name: playerName,
+        color: playerColor,
+        tankClass: playerTankClass,
+        skinId: finalSkin,
+        bulletTrail: finalTrail,
+        roofDecal: finalDecal,
+        rankTier: getRankFromRp(playerRankRp).tier,
+        rankRp: playerRankRp,
+      };
+      socketRef.current.send(JSON.stringify(queueMsg));
+      setQueueStatus({
+        inQueue: true,
+        matchType: chosenMatchType,
+        currentCount: 1,
+        targetCount: 6,
+        elapsedSeconds: 0,
+        estimatedSeconds: 25,
+        players: [
+          {
+            id: myPlayerId || 'me',
+            name: playerName,
+            color: playerColor,
+            tankClass: playerTankClass,
+            rankRp: playerRankRp,
+            rankTier: getRankFromRp(playerRankRp).tier,
+            team: 'RED',
+            isBot: false,
+          },
+        ],
+      });
+      sounds.playPowerUp();
+    }
+  };
+
+  const handleCancelQueue = () => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      const cancelMsg: ClientMessage = { type: 'QUEUE_LEAVE' };
+      socketRef.current.send(JSON.stringify(cancelMsg));
+    }
+    setQueueStatus((prev) => ({ ...prev, inQueue: false }));
+    setMatchFoundData(null);
+    sounds.playRadioBeep();
+  };
+
+  const handleAutoFillQueueBots = () => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      const fillMsg: ClientMessage = { type: 'QUEUE_AUTO_FILL_BOTS' };
+      socketRef.current.send(JSON.stringify(fillMsg));
+      sounds.playPowerUp();
+    }
+  };
+
   const handleRespawn = () => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       const respawnMsg: ClientMessage = { type: 'RESPAWN' };
@@ -1158,8 +1646,71 @@ export default function App() {
     }
   };
 
+  const handleRecall = () => {
+    sounds.playPowerUp();
+    haptics.celebrate();
+    if (myTank && !myTank.isDead) {
+      const spawnX = myTank.team === 'RED' ? 300 : myTank.team === 'BLUE' ? worldSize.width - 300 : worldSize.width / 2;
+      const spawnY = myTank.team === 'RED' ? 300 : myTank.team === 'BLUE' ? worldSize.height - 300 : worldSize.height / 2;
+      myTank.x = spawnX;
+      myTank.y = spawnY;
+      myTank.hp = myTank.maxHp;
+      myTank.shield = 100;
+    }
+    setWeatherToast({
+      name: 'BIẾN VỀ CĂN CỨ',
+      icon: '🌀',
+      description: 'Đã dịch chuyển về căn cứ đồng minh và hồi phục toàn bộ Máu & Giáp!',
+      themeColor: '#38bdf8',
+    });
+  };
+
+  const handleQuickHeal = () => {
+    sounds.playPowerUp();
+    haptics.medium();
+    if (myTank && !myTank.isDead) {
+      myTank.hp = Math.min(myTank.maxHp, myTank.hp + 35);
+    }
+    setWeatherToast({
+      name: 'BỔ TRỢ HỒI MÁU',
+      icon: '💚',
+      description: 'Hồi phục ngay +35 HP Máu xe tăng!',
+      themeColor: '#10b981',
+    });
+  };
+
+  const handleSignalPing = (type: 'ATTACK' | 'RETREAT' | 'GATHER') => {
+    const text =
+      type === 'ATTACK'
+        ? '⚔️ [HIỆU LỆNH] Tấn công mục tiêu!'
+        : type === 'RETREAT'
+        ? '⚠️ [HIỆU LỆNH] Cảnh giác nguy hiểm, rút lui!'
+        : '🚩 [HIỆU LỆNH] Toàn đội tập hợp!';
+    handleSendMessage(text);
+  };
+
   // Find my current tank
   const myTank = tanks.find((t) => t.id === myPlayerId);
+
+  // Record match end stats (Wins, Losses, Kills, Deaths, Score, Streak)
+  const recordedMatchRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!teamScore?.winner || !myTank) return;
+    const matchKey = `${teamScore.winner}_${teamScore.red}_${teamScore.blue}`;
+    if (recordedMatchRef.current === matchKey) return;
+    recordedMatchRef.current = matchKey;
+
+    const isWin = myTank.team === teamScore.winner;
+    recordMatchCompletion({
+      isRanked: matchType === 'RANKED',
+      isWin,
+      kills: myTank.kills || 0,
+      deaths: myTank.deaths || 0,
+      score: myTank.score || 0,
+      streak: myTank.streak || 0,
+    });
+    console.log('[PlayerStats] Saved match result:', { isWin, kills: myTank.kills, score: myTank.score });
+  }, [teamScore?.winner, myTank?.team, myTank?.kills, myTank?.deaths, myTank?.score, myTank?.streak, matchType]);
 
   const getAmmoInfo = (type?: BulletModifier) => {
     switch (type) {
@@ -1192,8 +1743,8 @@ export default function App() {
 
   if (!isInGame) {
     return (
-      <div className="relative w-screen h-screen overflow-x-hidden bg-slate-950 font-sans select-none flex flex-col">
-        {/* Fullscreen Orientation Guard for Mobile: Restricts to Landscape mode */}
+      <div className="relative w-screen h-[100dvh] max-h-[100dvh] h-screen overflow-hidden bg-slate-950 font-sans select-none flex flex-col">
+        {/* Fullscreen Orientation Guard for Mobile: Prompts to rotate to landscape */}
         <OrientationGuard />
 
         {/* AFK Kicked Notice Banner */}
@@ -1215,312 +1766,180 @@ export default function App() {
           </div>
         )}
 
+        {/* Weather Tactical Transition Toast Banner */}
+        {weatherToast && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
+            <div className="flex items-center justify-between gap-3 bg-slate-950/95 border-2 border-sky-500/80 text-white p-3 sm:p-3.5 rounded-2xl shadow-2xl backdrop-blur-md">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-2xl shrink-0 animate-bounce">{weatherToast.icon}</span>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs sm:text-sm font-black text-white">{weatherToast.name}</span>
+                    {weatherToast.tacticalTitle && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40">
+                        {weatherToast.tacticalTitle}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] sm:text-xs text-slate-300 font-medium leading-tight mt-0.5">
+                    {weatherToast.tacticalDesc || weatherToast.description}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setWeatherToast(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0"
+                title="Đóng thông báo"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <HomePage
           onJoin={handleJoinGame}
           onlineCount={lobbyInfo.publicOnlineCount}
           isSocketConnected={isSocketConnected}
           publicPlayers={lobbyInfo.publicPlayers}
+          customRooms={lobbyInfo.customRooms}
           initialMode={gameMode}
           currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
           ping={ping}
           aimMode={aimMode}
           onAimModeChange={setAimMode}
+          playerRankRp={playerRankRp}
+          onUpdateRankRp={setPlayerRankRp}
+          onStartQueue={handleStartQueue}
+          userSkin={userSkin}
+          userTrail={userTrail}
+          userDecal={userDecal}
+          onSaveCosmetics={handleSaveCosmetics}
+          currentUser={currentUser}
+          onOpenAccountModal={() => setIsAccountModalOpen(true)}
+          onUserChange={(updated) => {
+            setCurrentUser(updated);
+            if (updated.rankRp) setPlayerRankRp(updated.rankRp);
+            if (updated.skinId) setUserSkin(updated.skinId);
+            if (updated.bulletTrail) setUserTrail(updated.bulletTrail);
+            if (updated.roofDecal) setUserDecal(updated.roofDecal);
+          }}
+          initialTab={homePageTab}
+        />
+
+        {/* Account Toast Banner */}
+        {accountToast?.show && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-60 animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%] pointer-events-auto">
+            <div className="bg-slate-950/95 border-2 border-emerald-500 text-emerald-200 font-mono font-bold text-xs p-3.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center justify-between gap-3">
+              <span>{accountToast.text}</span>
+              <button
+                type="button"
+                onClick={() => setAccountToast(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Account & Google Cloud Synchronization Modal */}
+        <AccountModal
+          isOpen={isAccountModalOpen}
+          onClose={() => {
+            try {
+              localStorage.setItem('tank_auth_initial_shown', 'true');
+            } catch (e) {}
+            setIsAccountModalOpen(false);
+          }}
+          currentUser={currentUser}
+          onUserChange={(updated) => {
+            setCurrentUser(updated);
+            if (updated.rankRp) setPlayerRankRp(updated.rankRp);
+            if (updated.skinId) setUserSkin(updated.skinId);
+            if (updated.bulletTrail) setUserTrail(updated.bulletTrail);
+            if (updated.roofDecal) setUserDecal(updated.roofDecal);
+          }}
+          onToast={(text) => {
+            setAccountToast({ show: true, text });
+            setTimeout(() => setAccountToast(null), 3800);
+          }}
+          playerRankRp={playerRankRp}
+          onOpenFullProfile={() => setHomePageTab('profile')}
+        />
+
+        {/* 6-Player 3v3 Matchmaking Waiting & Countdown Modal */}
+        <MatchmakingModal
+          isOpen={queueStatus.inQueue || !!matchFoundData}
+          matchType={queueStatus.matchType}
+          currentCount={queueStatus.currentCount}
+          targetCount={queueStatus.targetCount}
+          elapsedSeconds={queueStatus.elapsedSeconds}
+          players={queueStatus.players}
+          matchFoundData={matchFoundData}
+          onCancel={handleCancelQueue}
+          onAutoFillBots={handleAutoFillQueueBots}
         />
       </div>
     );
   }
 
+  const currentRank = getRankFromRp(myTank?.rankRp ?? playerRankRp);
+
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 font-sans select-none flex flex-col">
+    <div className="relative w-screen h-[100dvh] max-h-[100dvh] h-screen overflow-hidden bg-slate-950 font-sans select-none flex flex-col">
       {/* Fullscreen Orientation Guard for Mobile: Restricts to Landscape mode */}
       <OrientationGuard />
 
-      {/* 1. Universal Top Bar (DLAND TANK) */}
-      {showTopBar && (
-        <header className={`${
-          isShortLandscape ? 'h-9 px-1.5 sm:px-3' : 'h-14 px-3 sm:px-5'
-        } bg-slate-900/95 border-b border-slate-800/80 flex items-center justify-between z-30 shrink-0 select-none backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150`}>
-          {/* Left: 1. Tiêu đề DLAND TANK & 2. Số người chơi */}
-          <div className="flex items-center gap-1.5 sm:gap-3">
-            <span className={`${isShortLandscape ? 'text-xs' : 'text-base sm:text-lg'} font-black tracking-tight text-white font-mono flex items-center gap-1 sm:gap-2`}>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              DLAND TANK
-            </span>
-
-            {/* Số người chơi */}
-            <div
-              className={`flex items-center gap-1 px-1.5 py-0.5 sm:py-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-semibold text-slate-200 shadow-sm ${
-                isShortLandscape ? 'text-[10px]' : 'text-xs'
-              }`}
-              title="Số người chơi đang trực tuyến"
-            >
-              <Users className="w-3 h-3 text-sky-400" />
-              <span>
-                {gameMode === 'PUBLIC'
-                  ? `${Math.max(tanks.filter((t) => !t.isBot).length, lobbyInfo.publicOnlineCount, isInGame ? 1 : 0)} Xe`
-                  : `${tanks.length || (isInGame ? 1 : 0)} Xe`}
-              </span>
-            </div>
+      {/* Tactical Team Beacon Alert Banner */}
+      {beaconAlert && Date.now() - beaconAlert.timestamp < 3800 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-none">
+          <div
+            className={`px-4 py-1.5 rounded-2xl border shadow-2xl backdrop-blur-md font-mono text-xs font-bold flex items-center gap-2 ${
+              beaconAlert.pingType === 'DEFEND'
+                ? 'bg-sky-950/95 border-sky-400 text-sky-200 shadow-sky-500/20'
+                : beaconAlert.pingType === 'GATHER'
+                ? 'bg-emerald-950/95 border-emerald-400 text-emerald-200 shadow-emerald-500/20'
+                : 'bg-amber-950/95 border-amber-400 text-amber-200 shadow-amber-500/20'
+            }`}
+          >
+            <span className="animate-bounce">📍</span>
+            <span className="text-white font-black">[{beaconAlert.senderName}]</span>
+            <span>đã chỉ định {beaconAlert.pingLabel}!</span>
           </div>
-
-          {/* Center: 3. Đổi kích thước (Adaptive Screen Zoom) & 4. Ping */}
-          <div className="flex items-center gap-1.5 sm:gap-3">
-            {/* Đổi kích thước */}
-            <div
-              className="flex items-center bg-slate-800/90 rounded-lg px-1 py-0.5 border border-slate-700/80 text-[10px] sm:text-xs shadow-sm"
-              title="Tỉ lệ hiển thị chiến trường (Tự động thích ứng màn hình hoặc chỉnh tay)"
-            >
-              <button
-                onClick={() => {
-                  setIsAutoZoom(false);
-                  setZoomScale((prev: number) => Math.max(0.48, Math.round(((isAutoZoom ? effectiveZoomScale : prev) - 0.08) * 100) / 100));
-                }}
-                className="p-0.5 sm:p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
-                title="Thu nhỏ (-)"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-              <select
-                value={isAutoZoom ? 'AUTO' : zoomScale}
-                onChange={(e) => {
-                  if (e.target.value === 'AUTO') {
-                    setIsAutoZoom(true);
-                  } else {
-                    setIsAutoZoom(false);
-                    setZoomScale(Number(e.target.value));
-                  }
-                }}
-                className="bg-transparent text-sky-300 font-mono text-[10px] sm:text-xs font-bold px-0.5 cursor-pointer focus:outline-none text-center"
-              >
-                <option value="AUTO" className="bg-slate-900 text-amber-300 font-bold">
-                  Auto ({Math.round(effectiveZoomScale * 100)}%)
-                </option>
-                <option value={0.5} className="bg-slate-900 text-slate-200">50%</option>
-                <option value={0.6} className="bg-slate-900 text-slate-200">60%</option>
-                <option value={0.67} className="bg-slate-900 text-slate-200">67%</option>
-                <option value={0.75} className="bg-slate-900 text-slate-200">75% (Chuẩn)</option>
-                <option value={0.9} className="bg-slate-900 text-slate-200">90%</option>
-                <option value={1.0} className="bg-slate-900 text-slate-200">100%</option>
-                <option value={1.25} className="bg-slate-900 text-slate-200">125%</option>
-              </select>
-              <button
-                onClick={() => {
-                  setIsAutoZoom(false);
-                  setZoomScale((prev: number) => Math.min(1.25, Math.round(((isAutoZoom ? effectiveZoomScale : prev) + 0.08) * 100) / 100));
-                }}
-                className="p-0.5 sm:p-1 hover:text-white text-slate-400 rounded cursor-pointer transition-colors"
-                title="Phóng to (+)"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Ping */}
-            <div
-              className={`flex items-center gap-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-mono tabular-nums shadow-sm ${
-                isShortLandscape ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs'
-              }`}
-              title="Độ trễ mạng qua WebSocket (Ping)"
-            >
-              <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${ping < 80 ? 'bg-emerald-400 animate-pulse' : ping < 150 ? 'bg-amber-400' : 'bg-rose-400'}`} />
-              <span className={ping < 80 ? 'text-emerald-400 font-bold' : ping < 150 ? 'text-amber-400 font-bold' : 'text-rose-400 font-bold'}>
-                {ping}ms
-              </span>
-            </div>
-
-            {/* Dynamic Weather Ambient Status */}
-            <div
-              className={`flex items-center gap-1 rounded-lg bg-slate-800/80 border border-slate-700/70 font-mono shadow-sm select-none ${
-                isShortLandscape ? 'px-1.5 py-0.5 text-[10px]' : 'px-2.5 py-1 text-xs'
-              }`}
-              title={`Thời tiết chiến trường: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}`}
-            >
-              <span className="text-xs sm:text-sm">{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
-              <span className="text-slate-200 font-bold hidden lg:inline">
-                {WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}
-              </span>
-            </div>
-          </div>
-
-          {/* Right: Loa, Âm thanh, Gara xe, Help, Đổi xe, Khán giả, Thoát, Ẩn thanh */}
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            {/* Quick Aim Mode Toggle: Movement Direction (Tank 1990) vs Mouse 360° */}
-            <button
-              type="button"
-              onClick={() => {
-                const nextMode = aimMode === 'MOVEMENT' ? 'MOUSE' : 'MOVEMENT';
-                setAimMode(nextMode);
-                sounds.playPowerUp();
-                setWeatherToast({
-                  name: nextMode === 'MOVEMENT' ? 'BẮN THEO HƯỚNG XE' : 'BẮN THEO CHUỘT 360°',
-                  icon: nextMode === 'MOVEMENT' ? '🎯' : '🖱️',
-                  description: nextMode === 'MOVEMENT'
-                    ? 'Pháo tự động nhắm theo hướng xe chạy (Tank 1990). Bấm Space / J / Chuột để bắn!'
-                    : 'Pháo xoay tự do 360° theo con trỏ chuột.',
-                  themeColor: nextMode === 'MOVEMENT' ? '#10b981' : '#38bdf8',
-                });
-              }}
-              className={`flex items-center gap-1 font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
-                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
-              } ${
-                aimMode === 'MOVEMENT'
-                  ? 'bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 border-emerald-500/60'
-                  : 'bg-slate-800 hover:bg-slate-700 text-sky-300 border-sky-500/40'
-              }`}
-              title="Đổi chế độ ngắm bắn: Theo hướng di chuyển (Tank 1990) / Theo chuột 360° (Phím tắt C)"
-            >
-              <Target className="w-3 h-3 text-emerald-400" />
-              <span className="hidden xl:inline">{aimMode === 'MOVEMENT' ? 'Bắn Hướng Xe' : 'Bắn Chuột 360°'}</span>
-              <span className="xl:hidden">{aimMode === 'MOVEMENT' ? 'Hướng' : 'Chuột'}</span>
-              {!isShortLandscape && (
-                <kbd className="px-1 py-0.2 bg-slate-900/90 border border-slate-700 rounded text-[9px] text-amber-300 font-mono">C</kbd>
-              )}
-            </button>
-
-            {/* Gara Tùy Biến Xe Tăng & Skin Ngoại Trang */}
-            <button
-              onClick={() => setIsGarageOpen(true)}
-              className={`flex items-center gap-1 font-bold text-fuchsia-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-fuchsia-500/50 hover:border-fuchsia-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
-                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
-              }`}
-              title="Gara Tùy Biến Xe Tăng & Skin Ngoại Trang"
-            >
-              <Palette className="w-3 h-3 text-fuchsia-400" />
-              <span>Gara</span>
-            </button>
-
-            {/* Quick Mute Loa */}
-            <button
-              onClick={handleToggleMute}
-              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
-                isShortLandscape ? 'p-1' : 'p-2'
-              }`}
-              title={isMuted ? 'Bật âm thanh (Loa)' : 'Tắt âm thanh (Loa)'}
-            >
-              {isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-sky-400" />}
-            </button>
-
-            {/* Help */}
-            <button
-              onClick={() => setIsControlsModalOpen(true)}
-              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
-                isShortLandscape ? 'p-1' : 'p-2'
-              }`}
-              title="Hướng dẫn & Phím tắt (Help)"
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-sky-400" />
-            </button>
-
-            {/* Đổi xe */}
-            <button
-              onClick={() => setIsInGame(false)}
-              className={`flex items-center gap-1 font-bold text-amber-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-amber-500/50 hover:border-amber-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
-                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
-              }`}
-              title="Đổi loại xe tăng hoặc đổi chế độ"
-            >
-              <Shield className="w-3 h-3 text-amber-400" />
-              <span>Đổi Xe</span>
-            </button>
-
-            {/* Chuyển đổi Khán Giả / Tham Chiến */}
-            <button
-              onClick={() => handleToggleSpectator()}
-              className={`flex items-center gap-1 font-bold rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 border ${
-                isShortLandscape ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
-              } ${
-                isSpectator
-                  ? 'bg-sky-600 hover:bg-sky-500 text-white border-sky-400 shadow-sky-600/30'
-                  : 'bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border-sky-500/40'
-              }`}
-              title={isSpectator ? 'Tham gia chiến đấu ngay' : 'Chuyển sang chế độ khán giả xem trận'}
-            >
-              {isSpectator ? <Swords className="w-3 h-3 text-white" /> : <Eye className="w-3 h-3 text-sky-400" />}
-              <span>{isSpectator ? 'Vào Đấu' : 'Xem Trận'}</span>
-            </button>
-
-            {/* Thoát Game / Rời Trận */}
-            <button
-              onClick={handleExitGame}
-              className={`flex items-center gap-1 font-bold text-rose-300 hover:text-white bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/50 hover:border-rose-400 rounded-lg shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
-                isShortLandscape ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'
-              }`}
-              title="Thoát trận đấu và quay về sảnh chờ"
-            >
-              <LogOut className="w-3 h-3 text-rose-400" />
-              <span>{isShortLandscape ? 'Thoát' : 'Thoát Game'}</span>
-            </button>
-
-            {/* Ẩn thanh */}
-            <button
-              onClick={() => setShowTopBar(false)}
-              className={`rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/70 shadow-sm ${
-                isShortLandscape ? 'p-1' : 'px-2.5 py-1.5 text-xs flex items-center gap-1'
-              }`}
-              title="Ẩn thanh công cụ (Phím U)"
-            >
-              <ChevronUp className="w-3.5 h-3.5 text-sky-400" />
-              {!isShortLandscape && <span className="hidden md:inline">Ẩn Thanh (U)</span>}
-            </button>
-          </div>
-        </header>
+        </div>
       )}
 
-      {/* Floating pull-down tab when top bar is hidden */}
-      {!showTopBar && (
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex items-center gap-2">
-          <button
-            onClick={() => setShowTopBar(true)}
-            className="flex items-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white px-3.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
-            title="Nhấn phím U để mở nhanh"
-          >
-            <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
-            <span>Hiện Thanh DLAND TANK (U)</span>
-          </button>
-          <div className="bg-slate-900/90 border border-slate-700/80 text-sky-300 px-2.5 py-1 rounded-full text-[11px] font-mono shadow-xl backdrop-blur-md">
-            Zoom {Math.round(effectiveZoomScale * 100)}%
+      {/* Weather Tactical Transition Toast Banner (In-game) */}
+      {weatherToast && (
+        <div className="fixed top-12 sm:top-14 left-1/2 -translate-x-1/2 z-50 pointer-events-auto flex items-center gap-2.5 sm:gap-3 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-2xl bg-slate-950/95 border-2 border-sky-500/80 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-300 max-w-[92vw] sm:max-w-md">
+          <div className="text-2xl sm:text-3xl shrink-0 animate-bounce">{weatherToast.icon}</div>
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs sm:text-sm font-black text-white">{weatherToast.name}</span>
+              {weatherToast.tacticalTitle && (
+                <span className="text-[9px] sm:text-[9.5px] font-bold px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40">
+                  {weatherToast.tacticalTitle}
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] sm:text-xs text-slate-300 font-medium leading-tight mt-0.5">
+              {weatherToast.tacticalDesc || weatherToast.description}
+            </p>
           </div>
-
-          <div
-            className="bg-slate-900/90 border border-slate-700/80 text-slate-300 px-2.5 py-1 rounded-full text-[11px] font-mono shadow-xl backdrop-blur-md flex items-center gap-1.5 select-none"
-            title={`Thời tiết: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}`}
-          >
-            <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
-            <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName}</span>
-          </div>
-
           <button
-            onClick={() => setIsGarageOpen(true)}
-            className="flex items-center gap-1 bg-fuchsia-950/80 hover:bg-fuchsia-900 border border-fuchsia-500/60 text-fuchsia-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
-            title="Mở Gara Tùy Biến Xe Tăng"
+            onClick={() => setWeatherToast(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer shrink-0 ml-auto"
+            title="Đóng thông báo"
           >
-            <Palette className="w-3 h-3 text-fuchsia-400" />
-            <span>Gara</span>
-          </button>
-
-          <button
-            onClick={() => setIsAudioSettingsOpen(true)}
-            className="flex items-center gap-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/60 text-amber-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
-            title="Tùy chỉnh Âm thanh"
-          >
-            <Sliders className="w-3 h-3 text-amber-400" />
-            <span>Âm Thanh</span>
-          </button>
-
-          <button
-            onClick={handleExitGame}
-            className="flex items-center gap-1 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/60 text-rose-300 px-2.5 py-1 rounded-full text-xs shadow-xl backdrop-blur-md cursor-pointer transition-all active:scale-95"
-            title="Thoát trận đấu"
-          >
-            <LogOut className="w-3 h-3 text-rose-400" />
-            <span>Thoát</span>
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* 2. Interactive Game Battlefield Canvas */}
+      {/* 2. Full-Screen Interactive Game Battlefield Canvas */}
       <div
-        className="relative flex-1 w-full h-full overflow-hidden"
+        className="relative w-full h-full flex-1 overflow-hidden"
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
@@ -1564,19 +1983,19 @@ export default function App() {
           </div>
         )}
 
-        {/* Top-Center Dedicated Game Mode Tactical Status Widget */}
+        {/* Top-Center Dedicated Game Mode Tactical Status Widget (Positioned cleanly below top match header, never overlapping) */}
         {isInGame && (
-          <div className={`absolute left-1/2 -translate-x-1/2 z-30 pointer-events-auto flex flex-col items-center gap-1 max-w-xl w-[94%] sm:w-auto ${
-            isShortLandscape ? 'top-1' : 'top-2.5 sm:top-3'
+          <div className={`absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex flex-col items-center gap-1 max-w-sm w-auto ${
+            isShortLandscape ? 'top-9' : 'top-11 sm:top-12'
           }`}>
             {/* 1. BATTLE ROYALE MODE HUD */}
             {(gameMode === 'BATTLE_ROYALE' || (storm && storm.active)) && (
               <div className="flex flex-col items-center gap-1">
-                <div className={`bg-slate-950/92 border border-purple-500/70 shadow-2xl shadow-purple-500/20 backdrop-blur-md rounded-2xl flex items-center ${
-                  isShortLandscape ? 'px-2 py-0.5 gap-2 text-[10px]' : 'px-3.5 py-1.5 gap-2.5 sm:gap-3.5 text-xs'
+                <div className={`bg-slate-950/92 border border-purple-500/70 shadow-2xl shadow-purple-500/20 backdrop-blur-md rounded-xl flex items-center ${
+                  isShortLandscape ? 'px-2 py-0.5 gap-1.5 text-[9px]' : 'px-3 py-1 gap-2 sm:gap-3 text-xs'
                 }`}>
                   <div className="flex items-center gap-1 text-purple-300 font-mono font-black tracking-tight whitespace-nowrap">
-                    <Zap className={`${isShortLandscape ? 'w-3 h-3' : 'w-4 h-4'} text-purple-400 animate-pulse`} />
+                    <Zap className={`${isShortLandscape ? 'w-2.5 h-2.5' : 'w-3.5 h-3.5'} text-purple-400 animate-pulse`} />
                     <span>BO G.Đ {storm?.phase || 1}</span>
                   </div>
 
@@ -1584,7 +2003,7 @@ export default function App() {
 
                   {storm?.isShrinking ? (
                     <div className="text-amber-300 font-bold flex items-center gap-1 animate-pulse whitespace-nowrap">
-                      <AlertTriangle className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-amber-400`} />
+                      <AlertTriangle className={`${isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3'} text-amber-400`} />
                       <span>THU HẸP! ({Math.round(storm.currentRadius)}m)</span>
                     </div>
                   ) : (
@@ -1598,14 +2017,14 @@ export default function App() {
                   <div className="h-3 w-px bg-slate-800" />
 
                   <div className="flex items-center gap-1 text-emerald-300 font-mono font-bold whitespace-nowrap">
-                    <Users className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-emerald-400`} />
+                    <Users className={`${isShortLandscape ? 'w-2.5 h-2.5' : 'w-3 h-3'} text-emerald-400`} />
                     <span>{aliveCount || tanks.filter((t) => !t.isDead).length}/{totalParticipants || tanks.length} Xe</span>
                   </div>
                 </div>
 
                 {myTank?.inStorm && !myTank.isDead && (
-                  <div className="bg-rose-950/95 border border-rose-500 text-rose-200 px-2.5 py-0.5 rounded-full text-[10px] font-black animate-bounce shadow-xl flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3 text-rose-400" />
+                  <div className="bg-rose-950/95 border border-rose-500 text-rose-200 px-2 py-0.2 rounded-full text-[9px] font-black animate-bounce shadow-xl flex items-center gap-1">
+                    <AlertTriangle className="w-2.5 h-2.5 text-rose-400" />
                     <span>⚠️ NGOÀI VÒNG BO (-{Math.round(storm?.dps || 5)} HP/s)!</span>
                   </div>
                 )}
@@ -1615,25 +2034,25 @@ export default function App() {
             {/* 2. TEAM DEATHMATCH MODE HUD */}
             {gameMode === 'TEAM_DEATHMATCH' && teamScore && (
               <div className="flex flex-col items-center gap-1">
-                <div className={`bg-slate-950/92 border border-slate-700/80 shadow-2xl backdrop-blur-md rounded-2xl flex flex-col items-center ${
-                  isShortLandscape ? 'px-2.5 py-1 min-w-[230px] gap-1 text-[10px]' : 'px-4 py-2 min-w-[290px] sm:min-w-[360px] gap-1.5 text-xs'
+                <div className={`bg-slate-950/92 border border-slate-700/80 shadow-2xl backdrop-blur-md rounded-xl flex flex-col items-center ${
+                  isShortLandscape ? 'px-2 py-0.5 min-w-[200px] gap-0.5 text-[9px]' : 'px-3 py-1 min-w-[240px] sm:min-w-[280px] gap-1 text-xs'
                 }`}>
                   <div className="w-full flex items-center justify-between font-mono font-black">
                     <div className="flex items-center gap-1 text-rose-400">
-                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
                       <span>ĐỎ: {teamScore.red}</span>
                     </div>
-                    <span className="text-[9px] text-slate-400 font-bold px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700/60">
+                    <span className="text-[8.5px] text-slate-400 font-bold px-1 py-0.2 rounded bg-slate-800 border border-slate-700/60">
                       30 KILLS
                     </span>
                     <div className="flex items-center gap-1 text-sky-400">
                       <span>XANH: {teamScore.blue}</span>
-                      <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
                     </div>
                   </div>
 
                   {/* Dual tug-of-war bar towards 30 kills */}
-                  <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
+                  <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden flex border border-slate-800">
                     <div
                       className="h-full bg-rose-600 transition-all duration-300"
                       style={{ width: `${Math.min(50, (teamScore.red / 30) * 50)}%` }}
@@ -1646,7 +2065,7 @@ export default function App() {
                   </div>
 
                   {myTank?.inHealingBase && (
-                    <div className="text-[10px] text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
+                    <div className="text-[9px] text-emerald-300 font-bold flex items-center gap-1 animate-pulse">
                       <span>💚 Hồi máu trong căn cứ (+10 HP/s)</span>
                     </div>
                   )}
@@ -1654,16 +2073,16 @@ export default function App() {
               </div>
             )}
 
-            {/* 3. BOSS RAID MODE HUD */}
+            {/* 3. BOSS RAID MODE HUD - Compact and cleanly positioned beneath top bar */}
             {(gameMode === 'BOSS_RAID' || (boss && boss.isAlive)) && (
-              <div className="flex flex-col items-center gap-1">
+              <div className="flex flex-col items-center gap-0.5">
                 {boss && boss.isAlive ? (
-                  <div className={`bg-slate-950/95 border border-amber-500/80 shadow-2xl shadow-amber-500/20 backdrop-blur-md rounded-2xl flex flex-col items-center ${
-                    isShortLandscape ? 'px-2.5 py-1 min-w-[240px] gap-1 text-[10px]' : 'px-4 py-2 min-w-[300px] sm:min-w-[420px] gap-1.5 text-xs'
+                  <div className={`bg-slate-950/95 border border-amber-500/80 shadow-2xl shadow-amber-500/20 backdrop-blur-md rounded-xl flex flex-col items-center ${
+                    isShortLandscape ? 'px-2 py-0.5 min-w-[200px] max-w-[260px] gap-0.5 text-[9px]' : 'px-3 py-1 min-w-[240px] sm:min-w-[280px] max-w-xs gap-1 text-xs'
                   }`}>
                     <div className="w-full flex items-center justify-between">
                       <div className="flex items-center gap-1 text-amber-400 font-mono font-black">
-                        <Skull className={`${isShortLandscape ? 'w-3 h-3' : 'w-4 h-4'} text-amber-400 animate-bounce`} />
+                        <Skull className={`${isShortLandscape ? 'w-2.5 h-2.5' : 'w-3.5 h-3.5'} text-amber-400 animate-bounce`} />
                         <span>BOSS LEVIATHAN</span>
                       </div>
                       <span className="font-mono text-emerald-400 font-bold">
@@ -1672,7 +2091,7 @@ export default function App() {
                     </div>
 
                     {/* Boss HP Bar */}
-                    <div className="w-full h-2 bg-slate-900 rounded-full overflow-hidden border border-amber-500/40 p-0.5">
+                    <div className="w-full h-1.5 sm:h-2 bg-slate-900 rounded-full overflow-hidden border border-amber-500/40 p-0.5">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-red-600 via-amber-500 to-emerald-400 transition-all duration-150"
                         style={{ width: `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%` }}
@@ -1680,8 +2099,8 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-slate-950/90 border border-amber-500/40 px-2.5 py-1 rounded-xl text-[10px] sm:text-xs flex items-center gap-1.5 text-amber-300 shadow-lg">
-                    <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <div className="bg-slate-950/90 border border-amber-500/40 px-2 py-0.5 rounded-lg text-[9px] sm:text-xs flex items-center gap-1 text-amber-300 shadow-lg">
+                    <Trophy className="w-3 h-3 text-amber-400 shrink-0" />
                     <span>
                       Boss hồi sinh: <strong className="text-white font-mono">{Math.round(boss?.respawnTimeLeft || 0)}s</strong>
                     </span>
@@ -1694,96 +2113,194 @@ export default function App() {
 
         {/* Winner Winner Chicken Dinner Modal Celebration */}
         {brWinner && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
-            <div className="bg-gradient-to-b from-amber-950/90 via-slate-900 to-slate-950 border-2 border-amber-400 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl shadow-amber-500/30 space-y-4">
-              <div className="mx-auto w-20 h-20 rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center animate-bounce">
-                <Crown className="w-10 h-10 text-amber-300" />
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in zoom-in-95 duration-300 select-none">
+            <div className={`bg-gradient-to-b from-amber-950/90 via-slate-900 to-slate-950 border-2 border-amber-400 rounded-2xl md:rounded-3xl my-auto ${
+              isShortLandscape ? 'p-3 max-w-sm space-y-2 max-h-[82vh]' : 'p-6 sm:p-8 max-w-md space-y-4 max-h-[85vh]'
+            } overflow-y-auto custom-scrollbar w-full text-center shadow-2xl shadow-amber-500/30`}>
+              <div className={`mx-auto rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center animate-bounce ${
+                isShortLandscape ? 'w-10 h-10' : 'w-20 h-20'
+              }`}>
+                <Crown className={`${isShortLandscape ? 'w-5 h-5' : 'w-10 h-10'} text-amber-300`} />
               </div>
-              <div className="space-y-1">
-                <span className="text-xs uppercase font-mono font-bold text-amber-400 tracking-widest">
+              <div className="space-y-0.5">
+                <span className="text-[10px] sm:text-xs uppercase font-mono font-bold text-amber-400 tracking-widest">
                   BATTLE ROYALE CHAMPION
                 </span>
-                <h2 className="text-2xl sm:text-3xl font-black text-white font-mono">
+                <h2 className={`${isShortLandscape ? 'text-lg sm:text-xl' : 'text-2xl sm:text-3xl'} font-black text-white font-mono`}>
                   WINNER WINNER CHICKEN DINNER!
                 </h2>
               </div>
-              <div className="p-4 bg-slate-950/80 rounded-2xl border border-amber-500/40 text-left space-y-2">
-                <div className="flex items-center justify-between text-sm">
+              <div className={`bg-slate-950/80 rounded-xl border border-amber-500/40 text-left space-y-1 ${
+                isShortLandscape ? 'p-2 text-xs' : 'p-4 text-sm space-y-2'
+              }`}>
+                <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400 font-mono">Chiến binh chiến thắng:</span>
-                  <span className="font-bold text-amber-300 text-base">{brWinner.name}</span>
+                  <span className="font-bold text-amber-300 text-sm">{brWinner.name}</span>
                 </div>
-                <div className="flex items-center justify-between text-xs text-slate-400">
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
                   <span>Tổng số hạ gục:</span>
                   <span className="font-mono text-emerald-400 font-bold">{brWinner.kills} hạ gục</span>
                 </div>
               </div>
-              <p className="text-xs text-slate-400 animate-pulse">
+              <p className="text-[10px] sm:text-xs text-slate-400 animate-pulse">
                 🔄 Trận đấu sinh tồn mới sẽ tự động tái thiết lập trong giây lát...
               </p>
             </div>
           </div>
         )}
 
-        {/* Team Deathmatch Winner Modal Celebration */}
+        {/* Live Match Scoreboard Modal (TAB or click Trophy button) */}
+        {isScoreboardOpen && (
+          <Scoreboard
+            entries={leaderboard}
+            myPlayerId={myPlayerId}
+            isExpanded={isScoreboardOpen}
+            onToggleExpand={() => setIsScoreboardOpen(false)}
+            onHide={() => setIsScoreboardOpen(false)}
+            isShortLandscape={isShortLandscape}
+          />
+        )}
+
+        {/* Team Deathmatch Winner & End Game Score Summary Modal */}
         {teamScore && teamScore.winner && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in zoom-in-95 duration-300">
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in zoom-in-95 duration-300">
             <div
-              className={`border-2 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl space-y-4 ${
+              className={`border-2 rounded-2xl md:rounded-3xl ${
+                isShortLandscape ? 'p-3 max-w-sm space-y-1.5 max-h-[96vh] overflow-y-auto' : 'p-5 sm:p-7 max-w-md space-y-3'
+              } w-full text-center shadow-2xl ${
                 teamScore.winner === 'RED'
-                  ? 'bg-rose-950/90 border-rose-500 shadow-rose-500/30'
-                  : 'bg-sky-950/90 border-sky-500 shadow-sky-500/30'
+                  ? 'bg-gradient-to-b from-[#2a0808] to-[#140404] border-rose-500 shadow-rose-500/30'
+                  : 'bg-gradient-to-b from-[#08182b] to-[#040d17] border-sky-500 shadow-sky-500/30'
               }`}
             >
-              <div className="mx-auto w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-4xl animate-bounce">
+              <div className={`mx-auto rounded-2xl bg-white/10 flex items-center justify-center animate-bounce ${
+                isShortLandscape ? 'w-9 h-9 text-xl' : 'w-14 h-14 text-3xl'
+              }`}>
                 🏆
               </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white font-mono">
+
+              <h2 className={`${isShortLandscape ? 'text-base sm:text-lg' : 'text-xl sm:text-2xl'} font-black text-white font-mono`}>
                 {teamScore.winner === 'RED' ? '🔴 ĐỘI ĐỎ CHIẾN THẮNG!' : '🔵 ĐỘI XANH CHIẾN THẮNG!'}
               </h2>
-              <p className="text-xs text-slate-300">
-                Đã hoàn thành xuất sắc 30 điểm hạ gục trước đối phương!
-              </p>
-              <p className="text-xs text-slate-400 animate-pulse font-mono">
-                🔄 Vòng đấu mới sẽ tự động bắt đầu sau giây lát...
+
+              {/* Tỉ số chung cuộc */}
+              <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2 flex items-center justify-around font-mono">
+                <div className="text-center">
+                  <span className="text-[9px] uppercase text-rose-400 font-bold block">Đội Đỏ</span>
+                  <span className="text-lg font-black text-rose-400">{teamScore.red} Kills</span>
+                </div>
+                <div className="text-xs text-slate-500 font-bold">VS</div>
+                <div className="text-center">
+                  <span className="text-[9px] uppercase text-sky-400 font-bold block">Đội Xanh</span>
+                  <span className="text-lg font-black text-sky-400">{teamScore.blue} Kills</span>
+                </div>
+              </div>
+
+              {/* Thành tích cá nhân người chơi & Lưu thông tin */}
+              {myTank && (
+                <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-2.5 text-left space-y-1 text-xs font-mono">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>Kết quả của bạn:</span>
+                    <span className={`font-black ${myTank.team === teamScore.winner ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {myTank.team === teamScore.winner ? '🎉 CHIẾN THẮNG (+Điểm)' : '💀 THẤT BẠI'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span>KDA / Điểm Trận:</span>
+                    <span className="font-bold text-amber-300">
+                      ⚔️ {myTank.kills} / 💀 {myTank.deaths} • ⭐ {myTank.score} Điểm
+                    </span>
+                  </div>
+                  {matchType === 'RANKED' && (
+                    <div className="flex items-center justify-between text-amber-300 pt-0.5 border-t border-slate-800">
+                      <span>Xếp Hạng Rank:</span>
+                      <span className="font-bold">{myTank.rankTier} ({myTank.rankRp} RP)</span>
+                    </div>
+                  )}
+                  <div className="text-[9px] text-emerald-400 font-sans flex items-center gap-1 pt-0.5">
+                    <span>✓ Đã lưu thông tin người chơi & thành tích vào hồ sơ</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsScoreboardOpen(true)}
+                  className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 rounded-lg px-3 py-1.5 text-xs font-mono font-bold cursor-pointer"
+                >
+                  Xem Bảng Điểm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.stopBgm();
+                    setIsInGame(false);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-4 py-1.5 text-xs font-mono font-bold cursor-pointer"
+                >
+                  Rời Trận / Về Sảnh
+                </button>
+              </div>
+
+              <p className="text-[9.5px] text-slate-400 animate-pulse font-mono">
+                🔄 Vòng đấu mới tự động reset sau giây lát...
               </p>
             </div>
           </div>
         )}
 
-        {/* Weather Transition Announcement Toast */}
-        {weatherToast && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none animate-in fade-in slide-in-from-top-4 duration-300 max-w-md w-[92%]">
-            <div
-              className="flex items-center gap-3 bg-slate-950/95 border px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md text-xs"
-              style={{ borderColor: weatherToast.themeColor }}
-            >
-              <span className="text-3xl shrink-0 animate-bounce">{weatherToast.icon}</span>
-              <div className="min-w-0">
-                <div className="font-mono font-black uppercase tracking-wide flex items-center gap-1.5 text-xs truncate" style={{ color: weatherToast.themeColor }}>
-                  <span>THỜI TIẾT CHIẾN TRƯỜNG:</span>
-                  <span className="text-white font-bold">{weatherToast.name}</span>
-                </div>
-                <div className="text-[11px] text-slate-300 truncate mt-0.5">{weatherToast.description}</div>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {/* In-Game HUD Overlays */}
         {isInGame && (
           <>
-            {/* TOP-LEFT: Radar Minimap + Killfeed */}
-            <div className="absolute top-4 left-4 z-20 flex flex-col gap-2.5 pointer-events-none">
-              {/* Minimap on Top-Left (Small) or Button (Hidden) */}
-              {mapMode === 'small' && (
-                <div className="pointer-events-auto">
+            {/* TOP BAR: Clean MOBA Battle Header (Minimap on Left, Match Stats in Center, Controls on Right) */}
+            <div className="absolute top-2 inset-x-2 sm:inset-x-3 z-20 pointer-events-none flex items-start justify-between">
+              {/* TOP-LEFT: Radar Minimap + Killfeed Toggle */}
+              <div className="flex flex-col gap-1 sm:gap-1.5 pointer-events-none">
+                {/* Minimap on Top-Left (Small) or Button (Hidden) */}
+                {mapMode === 'small' && (
+                  <div className="pointer-events-auto">
+                    <RadarMinimap
+                      myPlayerId={myPlayerId}
+                      tanks={tanks}
+                      obstacles={obstacles}
+                      powerUps={powerUps}
+                      worldSize={worldSize}
+                      mode="small"
+                      onSetMode={setMapMode}
+                      onFocusWorldPos={handleFocusWorldPos}
+                      cameraPos={freeCameraPos}
+                      focusBeacon={focusBeacon}
+                      storm={storm}
+                      boss={boss}
+                      bases={bases}
+                      currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
+                    />
+                  </div>
+                )}
+
+                {mapMode === 'hidden' && (
+                  <button
+                    onClick={() => setMapMode('small')}
+                    className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 border border-sky-500/40 text-sky-300 px-2.5 py-1.5 rounded-lg shadow-lg text-xs backdrop-blur-sm cursor-pointer transition-all self-start active:scale-95"
+                    title="Nhấn phím M: Map Nhỏ -> Map To (Dialog giữa) -> Ẩn"
+                  >
+                    <MapIcon className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Hiện Bản Đồ (M)</span>
+                  </button>
+                )}
+
+                {/* Centered Large Map Dialog when mode is large */}
+                {mapMode === 'large' && (
                   <RadarMinimap
                     myPlayerId={myPlayerId}
                     tanks={tanks}
                     obstacles={obstacles}
                     powerUps={powerUps}
                     worldSize={worldSize}
-                    mode="small"
+                    mode="large"
                     onSetMode={setMapMode}
                     onFocusWorldPos={handleFocusWorldPos}
                     cameraPos={freeCameraPos}
@@ -1791,137 +2308,235 @@ export default function App() {
                     storm={storm}
                     boss={boss}
                     bases={bases}
+                    currentWeather={WEATHER_CYCLE[currentWeatherIndex]}
                   />
+                )}
+
+                {/* Combat Killfeed Status with Show/Hide */}
+                {showKillfeed ? (
+                  <div className="flex flex-col gap-1 pointer-events-auto bg-slate-950/90 p-1.5 rounded-xl border border-slate-800 shadow-xl backdrop-blur-md max-w-xs animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pb-0.5 border-b border-slate-800/80">
+                      <span className="flex items-center gap-1 text-sky-400 font-bold">
+                        <Bell className="w-2.5 h-2.5 text-sky-400" />
+                        <span>BÁO CÁO HẠ GỤC</span>
+                      </span>
+                      <button
+                        onClick={() => setShowKillfeed(false)}
+                        className="text-slate-400 hover:text-rose-400 p-0.5 rounded cursor-pointer hover:bg-slate-800"
+                        title="Ẩn thông báo hạ gục (Phím K)"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="pointer-events-none">
+                      <KillFeed events={events} isShortLandscape={isShortLandscape} />
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowKillfeed(true)}
+                    className="pointer-events-auto flex items-center gap-1 bg-slate-900/85 hover:bg-slate-800 border border-slate-700/70 text-slate-300 hover:text-white px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg shadow-md text-[10px] sm:text-xs backdrop-blur-md cursor-pointer transition-all self-start active:scale-95"
+                    title="Nhấn để mở thông báo hạ gục (Phím K)"
+                  >
+                    <Bell className="w-3 h-3 text-sky-400" />
+                    <span className="font-mono font-bold">Chiến Báo</span>
+                  </button>
+                )}
+              </div>
+
+              {/* TOP-CENTER: Clean MOBA Match Header (Mode, KDA, Ping, Weather) */}
+              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5 bg-slate-950/85 backdrop-blur-md border border-slate-800/90 rounded-full px-2.5 sm:px-4 py-1 shadow-2xl animate-in fade-in duration-200">
+                {/* Match Mode Badge */}
+                <div className="flex items-center gap-1 text-[10px] sm:text-xs font-mono font-bold text-amber-300">
+                  <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>
+                    {matchType === 'RANKED' ? '👑 RANK' : gameMode === 'PUBLIC' ? '⚔️ 5v5 MOBA' : '🛡️ CHIẾN TRƯỜNG'}
+                  </span>
                 </div>
-              )}
 
-              {mapMode === 'hidden' && (
-                <button
-                  onClick={() => setMapMode('small')}
-                  className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 border border-sky-500/40 text-sky-300 px-2.5 py-1.5 rounded-lg shadow-lg text-xs backdrop-blur-sm cursor-pointer transition-all self-start"
-                  title="Nhấn phím M: Map Nhỏ -> Map To (Dialog giữa) -> Ẩn"
-                >
-                  <MapIcon className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Hiện Bản Đồ (M)</span>
-                </button>
-              )}
+                <div className="w-px h-3 bg-slate-800" />
 
-              {/* Centered Large Map Dialog when mode is large */}
-              {mapMode === 'large' && (
-                <RadarMinimap
-                  myPlayerId={myPlayerId}
-                  tanks={tanks}
-                  obstacles={obstacles}
-                  powerUps={powerUps}
-                  worldSize={worldSize}
-                  mode="large"
-                  onSetMode={setMapMode}
-                  onFocusWorldPos={handleFocusWorldPos}
-                  cameraPos={freeCameraPos}
-                  focusBeacon={focusBeacon}
-                  storm={storm}
-                  boss={boss}
-                  bases={bases}
-                />
-              )}
-
-              {/* Combat Killfeed Status with Show/Hide */}
-              {showKillfeed ? (
-                <div className="flex flex-col gap-1 pointer-events-auto">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono pr-2">
-                    <span className="flex items-center gap-1">
-                      <Bell className="w-2.5 h-2.5 text-sky-400" />
-                      <span>BÁO CÁO HẠ GỤC</span>
+                {/* Team / Match Live Score Indicator */}
+                {teamScore && (gameMode === 'TEAM_DEATHMATCH' || matchType === 'RANKED') ? (
+                  <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs font-mono font-black">
+                    <span className={`px-1.5 py-0.2 rounded ${myTank?.team === 'RED' ? 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-400/50' : 'text-rose-400'}`}>
+                      🔴 {teamScore.red}
                     </span>
-                    <button
-                      onClick={() => setShowKillfeed(false)}
-                      className="text-slate-500 hover:text-rose-400 p-0.5 rounded cursor-pointer"
-                      title="Ẩn thông báo hạ gục (Phím K)"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+                    <span className="text-slate-500 font-normal">:</span>
+                    <span className={`px-1.5 py-0.2 rounded ${myTank?.team === 'BLUE' ? 'bg-sky-500/20 text-sky-300 ring-1 ring-sky-400/50' : 'text-sky-400'}`}>
+                      🔵 {teamScore.blue}
+                    </span>
                   </div>
-                  <div className="pointer-events-none">
-                    <KillFeed events={events} />
+                ) : null}
+
+                {/* Personal Tank Combat KDA & Score */}
+                {myTank && (
+                  <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs font-mono">
+                    <span className="text-emerald-400 font-bold" title="Hạ gục (Kills)">⚔️ {myTank.kills}</span>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-rose-400 font-bold" title="Bị hạ (Deaths)">💀 {myTank.deaths}</span>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-amber-400 font-bold" title="Điểm số (Score)">⭐ {myTank.score || 0}</span>
+                  </div>
+                )}
+
+                <div className="w-px h-3 bg-slate-800" />
+
+                {/* Ping & Interactive Tactical Weather Badge */}
+                <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-mono">
+                  <span className={`flex items-center gap-1 font-bold ${ping < 80 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {ping}ms
+                  </span>
+                  <button
+                    onClick={handleManualSwitchWeather}
+                    className="pointer-events-auto flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-sky-500/50 text-slate-200 cursor-pointer transition-all active:scale-95 shadow-sm"
+                    title={`Thời tiết: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].vietnameseName} (${weatherSecondsLeft}s). Hiệu ứng: ${WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].tacticalEffectDesc}. Click để chuyển thời tiết!`}
+                  >
+                    <span>{WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].icon}</span>
+                    <span className="text-[9px] font-bold text-sky-300 hidden sm:inline">
+                      {WEATHER_CONFIGS[WEATHER_CYCLE[currentWeatherIndex]].tacticalEffectTitle.split(' ')[0]}
+                    </span>
+                    <span className="text-[8.5px] text-slate-400 font-mono">
+                      {weatherSecondsLeft}s
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* TOP-RIGHT: Compact MOBA Control Cluster (Settings ⚙️, Scoreboard 🏆, Mute 🔊) */}
+              <div className="pointer-events-auto flex items-center gap-1 sm:gap-1.5">
+                {/* Settings Gear -> Opens InGameSettingsModal */}
+                <button
+                  onClick={() => setIsInGameSettingsOpen(true)}
+                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-200 hover:text-white flex items-center justify-center shadow-lg backdrop-blur-md cursor-pointer transition-all active:scale-95"
+                  title="Cài đặt trận đấu (Âm thanh, ngắm bắn, thoát trận...)"
+                >
+                  <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                </button>
+
+                {/* Scoreboard Modal Button */}
+                <button
+                  onClick={() => setIsScoreboardOpen(true)}
+                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-amber-500/50 text-amber-300 hover:text-amber-200 flex items-center justify-center shadow-lg backdrop-blur-md cursor-pointer transition-all active:scale-95"
+                  title="Bảng điểm chi tiết (TAB)"
+                >
+                  <Trophy className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                </button>
+
+                {/* Quick Mute Toggle */}
+                <button
+                  onClick={handleToggleMute}
+                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white flex items-center justify-center shadow-lg backdrop-blur-md cursor-pointer transition-all active:scale-95"
+                  title={isMuted ? 'Bật âm thanh (Loa)' : 'Tắt âm thanh (Loa)'}
+                >
+                  {isMuted ? (
+                    <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" />
+                  ) : (
+                    <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* TOP-RIGHT (MOBILE): HP Status Pill + Chat Icon Button (Below Settings Cluster) */}
+            {isMobile && myTank && (
+              <div
+                className={`fixed z-30 pointer-events-auto select-none flex items-center gap-1.5 sm:gap-2 ${
+                  isShortLandscape ? 'top-10 sm:top-11 right-2' : 'top-11 sm:top-12 right-2 sm:right-3'
+                }`}
+              >
+                {/* Mobile HP Status Pill */}
+                <div className="bg-slate-900/95 border border-slate-700/80 rounded-xl px-2 sm:px-2.5 py-1 shadow-xl backdrop-blur-md flex items-center gap-2 text-xs font-mono">
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      myTank.isDead
+                        ? 'bg-rose-500'
+                        : myTank.hp < myTank.maxHp * 0.3
+                        ? 'bg-rose-500 animate-pulse'
+                        : myTank.shield > 0
+                        ? 'bg-sky-400 animate-pulse'
+                        : 'bg-emerald-500'
+                    }`}
+                  />
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5 leading-none">
+                      <span className="font-bold text-white whitespace-nowrap text-[10px] sm:text-xs">
+                        HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}
+                      </span>
+                      {myTank.shield > 0 && (
+                        <span className="text-sky-400 font-bold whitespace-nowrap text-[9px] sm:text-[10px] flex items-center gap-0.5">
+                          <Shield className="w-2.5 h-2.5" />{myTank.shield}
+                        </span>
+                      )}
+                      <span className="text-slate-600 text-[10px]">|</span>
+                      <span className="text-emerald-400 font-bold whitespace-nowrap text-[9.5px] sm:text-[10px]">⚔️ {myTank.kills}</span>
+                      <span className="text-slate-600 text-[10px]">|</span>
+                      <span className="text-amber-400 font-bold whitespace-nowrap text-[9.5px] sm:text-[10px]">🔥 {myTank.streak}</span>
+                    </div>
+                    {/* Visual Mini Health Progress Bar */}
+                    <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                      <div
+                        className={`h-full rounded-full transition-all duration-150 ${
+                          myTank.hp > myTank.maxHp * 0.5
+                            ? 'bg-gradient-to-r from-emerald-500 to-green-400'
+                            : myTank.hp > myTank.maxHp * 0.25
+                            ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                            : 'bg-gradient-to-r from-rose-600 to-red-500 animate-pulse'
+                        }`}
+                        style={{ width: `${Math.max(0, Math.min(100, (myTank.hp / myTank.maxHp) * 100))}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => setShowKillfeed(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 border border-slate-700/60 text-slate-400 hover:text-white px-2.5 py-1 rounded-lg shadow-sm text-xs backdrop-blur-sm cursor-pointer transition-all self-start"
-                  title="Nhấn phím K để mở nhanh"
-                >
-                  <Bell className="w-3 h-3 text-slate-400" />
-                  <span>Thông Báo (K)</span>
-                </button>
-              )}
-            </div>
 
-            {/* TOP-RIGHT: Live Scoreboard with Show/Hide */}
-            <div className="absolute top-4 right-4 z-20 pointer-events-auto">
-              {showLeaderboard ? (
-                <Scoreboard
-                  entries={leaderboard}
-                  myPlayerId={myPlayerId}
-                  isExpanded={isScoreboardOpen}
-                  onToggleExpand={() => setIsScoreboardOpen((prev) => !prev)}
-                  onHide={() => setShowLeaderboard(false)}
-                />
-              ) : (
+                {/* Mobile Chat Icon Button (💬) */}
                 <button
-                  onClick={() => setShowLeaderboard(true)}
-                  className="flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 border border-amber-500/40 text-amber-300 px-3 py-1.5 rounded-lg shadow-lg text-xs backdrop-blur-sm cursor-pointer transition-all"
-                  title="Nhấn phím L để mở nhanh"
+                  type="button"
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    haptics.light();
+                    setIsChatOpen(true);
+                  }}
+                  onClick={() => {
+                    haptics.light();
+                    setIsChatOpen(true);
+                  }}
+                  className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-900/95 border-2 border-sky-500/80 hover:border-sky-400 text-sky-400 flex items-center justify-center shadow-lg active:scale-90 transition-transform cursor-pointer"
+                  title="Mở kênh chat chiến trường"
                 >
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Bảng Điểm (L)</span>
+                  <MessageSquare className="w-4 h-4 text-sky-300" />
+                  {unreadChatCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white font-mono text-[9px] font-bold flex items-center justify-center animate-pulse border border-slate-950">
+                      {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                    </span>
+                  )}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* BOTTOM-LEFT: Tank Stats Gauge with Show/Hide + In-Game Chat */}
-            <div className={`z-20 flex flex-col gap-1.5 pointer-events-none ${
-              isShortLandscape ? 'absolute top-11 left-3' : 'absolute bottom-4 left-4 gap-3'
-            }`}>
-              {/* Player Tank Health & Shield Gauge with Hide/Show */}
-              {myTank && (
-                <>
-                  {showStats ? (
-                    isShortLandscape ? (
-                      <div className="bg-slate-900/95 border border-slate-700/80 rounded-xl px-2.5 py-1 shadow-xl backdrop-blur-md pointer-events-auto select-none flex items-center gap-2 text-xs font-mono">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            myTank.isDead
-                              ? 'bg-rose-500'
-                              : myTank.hp < myTank.maxHp * 0.3
-                              ? 'bg-rose-500 animate-pulse'
-                              : myTank.shield > 0
-                              ? 'bg-sky-400 animate-pulse'
-                              : 'bg-emerald-500'
-                          }`}
-                        />
-                        <span className="font-bold text-white whitespace-nowrap">
-                          HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}
-                        </span>
-                        <span className="text-slate-600">|</span>
-                        <span className="text-emerald-400 font-bold whitespace-nowrap">⚔️ {myTank.kills}</span>
-                        <span className="text-slate-600">|</span>
-                        <span className="text-amber-400 font-bold whitespace-nowrap">🔥 {myTank.streak}</span>
-                        <button
-                          onClick={() => setShowStats(false)}
-                          className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer ml-1"
-                          title="Ẩn status"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md w-72 pointer-events-auto select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
-                      {/* Header with Tactical Status Badge & Hide Button */}
-                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                        <div className="flex items-center gap-1.5 text-xs font-bold">
+            {/* In-Game Chat: Desktop bottom-left or Mobile centered modal dialog */}
+            <ChatBox
+              messages={chatMessages}
+              onSendMessage={handleSendMessage}
+              isChatOpen={isChatOpen}
+              setIsChatOpen={setIsChatOpen}
+              isMobile={isMobile}
+            />
+
+            {/* BOTTOM-LEFT: Tank Stats Gauge with Show/Hide (Desktop ONLY, never rendered on mobile) */}
+            {!isMobile && (
+              <div className={`z-20 flex flex-col pointer-events-none ${
+                isShortLandscape ? 'absolute bottom-2 left-2 gap-1' : 'absolute bottom-3 left-3 sm:bottom-4 sm:left-4 gap-1.5 sm:gap-2'
+              }`}>
+                {/* Player Tank Health & Shield Gauge with Hide/Show */}
+                {myTank && (
+                  <>
+                    {showStats ? (
+                      isShortLandscape ? (
+                        <div className="bg-slate-900/95 border border-slate-700/80 rounded-xl px-2.5 py-1 shadow-xl backdrop-blur-md pointer-events-auto select-none flex items-center gap-2 text-xs font-mono">
                           <span
-                            className={`w-2.5 h-2.5 rounded-full ${
+                            className={`w-2 h-2 rounded-full shrink-0 ${
                               myTank.isDead
                                 ? 'bg-rose-500'
                                 : myTank.hp < myTank.maxHp * 0.3
@@ -1931,175 +2546,216 @@ export default function App() {
                                 : 'bg-emerald-500'
                             }`}
                           />
-                          <span className="text-white uppercase tracking-wider font-mono text-[11px]">
-                            {myTank.isDead
-                              ? 'ĐÃ BỊ PHÁ HỦY'
-                              : myTank.hp < myTank.maxHp * 0.3
-                              ? 'MÁU NGUY CẤP'
-                              : myTank.shield > 0
-                              ? 'GIÁP NĂNG LƯỢNG'
-                              : 'SẴN SÀNG TÁC CHIẾN'}
+                          <span className="font-bold text-white whitespace-nowrap">
+                            HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}
                           </span>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-slate-500 font-mono">STATUS (H)</span>
+                          <span className="text-slate-600">|</span>
+                          <span className="text-emerald-400 font-bold whitespace-nowrap">⚔️ {myTank.kills}</span>
+                          <span className="text-slate-600">|</span>
+                          <span className="text-amber-400 font-bold whitespace-nowrap">🔥 {myTank.streak}</span>
                           <button
                             onClick={() => setShowStats(false)}
-                            className="text-slate-400 hover:text-rose-400 p-0.5 rounded hover:bg-slate-800 cursor-pointer transition-colors"
-                            title="Ẩn thanh status (Phím H)"
+                            className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer ml-1"
+                            title="Ẩn status"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-3 h-3" />
                           </button>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-md w-72 pointer-events-auto select-none animate-in fade-in slide-in-from-bottom-2 duration-150">
+                        {/* Header with Tactical Status Badge & Hide Button */}
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                          <div className="flex items-center gap-1.5 text-xs font-bold">
+                            <span
+                              className={`w-2.5 h-2.5 rounded-full ${
+                                myTank.isDead
+                                  ? 'bg-rose-500'
+                                  : myTank.hp < myTank.maxHp * 0.3
+                                  ? 'bg-rose-500 animate-pulse'
+                                  : myTank.shield > 0
+                                  ? 'bg-sky-400 animate-pulse'
+                                  : 'bg-emerald-500'
+                              }`}
+                            />
+                            <span className="text-white uppercase tracking-wider font-mono text-[11px]">
+                              {myTank.isDead
+                                ? 'ĐÃ BỊ PHÁ HỦY'
+                                : myTank.hp < myTank.maxHp * 0.3
+                                ? 'MÁU NGUY CẤP'
+                                : myTank.shield > 0
+                                ? 'GIÁP NĂNG LƯỢNG'
+                                : 'SẴN SÀNG TÁC CHIẾN'}
+                            </span>
+                          </div>
 
-                      {/* Commander & Sector Location */}
-                      <div className="mt-2 flex items-center justify-between text-xs">
-                        <span className="font-bold text-white truncate max-w-[130px]">
-                          {myTank.name}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {getSectorName(myTank.x, myTank.y)}
-                        </span>
-                      </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-slate-500 font-mono">STATUS (H)</span>
+                            <button
+                              onClick={() => setShowStats(false)}
+                              className="text-slate-400 hover:text-rose-400 p-0.5 rounded hover:bg-slate-800 cursor-pointer transition-colors"
+                              title="Ẩn thanh status (Phím H)"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
 
-                      {/* HP Bar */}
-                      <div className="mt-1.5">
-                        <div className="flex justify-between items-center text-[11px] mb-1">
-                          <span className="text-slate-400 font-medium">Độ bền (HP):</span>
-                          <span className="font-mono text-emerald-400 font-bold tabular-nums">
-                            {Math.max(0, Math.ceil(myTank.hp))} / {myTank.maxHp}
+                        {/* Commander & Sector Location */}
+                        <div className="mt-2 flex items-center justify-between text-xs">
+                          <span className="font-bold text-white truncate max-w-[130px]">
+                            {myTank.name}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {getSectorName(myTank.x, myTank.y)}
                           </span>
                         </div>
-                        <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
-                          <div
-                            className={`h-full rounded-full transition-all duration-150 ${
-                              myTank.hp > myTank.maxHp * 0.5
-                                ? 'bg-gradient-to-r from-emerald-500 to-green-400'
-                                : myTank.hp > myTank.maxHp * 0.25
-                                ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                                : 'bg-gradient-to-r from-rose-600 to-red-500 animate-pulse'
-                            }`}
-                            style={{ width: `${Math.max(0, (myTank.hp / myTank.maxHp) * 100)}%` }}
-                          />
-                        </div>
-                      </div>
 
-                      {/* Shield Bar if active */}
-                      {myTank.shield > 0 && (
+                        {/* HP Bar */}
                         <div className="mt-1.5">
-                          <div className="flex justify-between items-center text-[11px] mb-0.5 text-sky-400 font-semibold">
-                            <span className="flex items-center gap-1 font-mono">
-                              <Shield className="w-3 h-3 text-sky-400" /> GIÁP NĂNG LƯỢNG
+                          <div className="flex justify-between items-center text-[11px] mb-1">
+                            <span className="text-slate-400 font-medium">Độ bền (HP):</span>
+                            <span className="font-mono text-emerald-400 font-bold tabular-nums">
+                              {Math.max(0, Math.ceil(myTank.hp))} / {myTank.maxHp}
                             </span>
-                            <span className="font-mono">{myTank.shield} / 100</span>
                           </div>
-                          <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                          <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
                             <div
-                              className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 rounded-full transition-all"
-                              style={{ width: `${Math.min(100, myTank.shield)}%` }}
+                              className={`h-full rounded-full transition-all duration-150 ${
+                                myTank.hp > myTank.maxHp * 0.5
+                                  ? 'bg-gradient-to-r from-emerald-500 to-green-400'
+                                  : myTank.hp > myTank.maxHp * 0.25
+                                  ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                                  : 'bg-gradient-to-r from-rose-600 to-red-500 animate-pulse'
+                              }`}
+                              style={{ width: `${Math.max(0, (myTank.hp / myTank.maxHp) * 100)}%` }}
                             />
                           </div>
                         </div>
-                      )}
 
-                      {/* Real-time Tank Speed Indicator */}
-                      <div className="mt-2 flex items-center justify-between text-[11px] font-mono bg-slate-950/80 border border-slate-800 px-2.5 py-1.5 rounded-lg">
-                        <span className="text-slate-400 flex items-center gap-1">
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          Tốc độ xe:
-                        </span>
-                        <span className="font-bold flex items-center gap-1.5">
-                          <span className={myTank.activePowerUp ? 'text-amber-300 font-extrabold animate-pulse' : 'text-sky-300'}>
-                            {Math.round((myTank.speed || 4.6) * 20)} km/h
+                        {/* Shield Bar if active */}
+                        {myTank.shield > 0 && (
+                          <div className="mt-1.5">
+                            <div className="flex justify-between items-center text-[11px] mb-0.5 text-sky-400 font-semibold">
+                              <span className="flex items-center gap-1 font-mono">
+                                <Shield className="w-3 h-3 text-sky-400" /> GIÁP NĂNG LƯỢNG
+                              </span>
+                              <span className="font-mono">{myTank.shield} / 100</span>
+                            </div>
+                            <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                              <div
+                                className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 rounded-full transition-all"
+                                style={{ width: `${Math.min(100, myTank.shield)}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Real-time Tank Speed Indicator */}
+                        <div className="mt-2 flex items-center justify-between text-[11px] font-mono bg-slate-950/80 border border-slate-800 px-2.5 py-1.5 rounded-lg">
+                          <span className="text-slate-400 flex items-center gap-1">
+                            <Zap className="w-3.5 h-3.5 text-amber-400" />
+                            Tốc độ xe:
                           </span>
-                          {myTank.activePowerUp && (
-                            <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.2 rounded font-mono">
-                              {myTank.activePowerUp.type === 'SPEED_BOOST' ? '+85% NITRO' : '+35% LINH KIỆN'}
+                          <span className="font-bold flex items-center gap-1.5">
+                            <span className={myTank.activePowerUp ? 'text-amber-300 font-extrabold animate-pulse' : 'text-sky-300'}>
+                              {Math.round((myTank.speed || 4.6) * 20)} km/h
                             </span>
-                          )}
-                        </span>
-                      </div>
-
-                      {/* Active Power-up indicator */}
-                      {myTank.activePowerUp && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-amber-300 font-semibold bg-amber-500/15 border border-amber-500/30 px-2 py-1 rounded-lg mt-2">
-                          <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                          <span>
-                            {myTank.activePowerUp.type === 'TRIPLE_SHOT'
-                              ? '🔱 Đạn Ba Tia (+35% Tốc Độ)'
-                              : myTank.activePowerUp.type === 'SPEED_BOOST'
-                              ? '🚀 NITRO SIÊU TỐC (+85% Tốc Độ)'
-                              : myTank.activePowerUp.type === 'RAPID_FIRE'
-                              ? '⚡⚡ Nạp Đạn Thần Tốc (+35% Tốc Độ)'
-                              : myTank.activePowerUp.type === 'SHIELD'
-                              ? '🛡️ Lá Chắn Giáp (+35% Tốc Độ)'
-                              : '✚ Hộp Cứu Thương (+35% Tốc Độ)'}
+                            {myTank.activePowerUp && (
+                              <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 py-0.2 rounded font-mono">
+                                {myTank.activePowerUp.type === 'SPEED_BOOST' ? '+85% NITRO' : '+35% LINH KIỆN'}
+                              </span>
+                            )}
                           </span>
                         </div>
-                      )}
 
-                      {/* Currently Loaded Random Ammunition */}
-                      {myTank.nextAmmoType && (
-                        <div className="flex items-center justify-between text-[11px] font-mono bg-slate-950/90 border border-slate-800 px-2.5 py-1.5 rounded-lg mt-2">
-                          <span className="text-slate-400">Đạn ngẫu nhiên nạp:</span>
-                          <span
-                            className="font-bold flex items-center gap-1.5"
-                            style={{ color: getAmmoInfo(myTank.nextAmmoType).color }}
-                          >
-                            <span>{getAmmoInfo(myTank.nextAmmoType).icon}</span>
-                            <span>{getAmmoInfo(myTank.nextAmmoType).name}</span>
-                          </span>
+                        {/* Active Power-up indicator */}
+                        {myTank.activePowerUp && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-amber-300 font-semibold bg-amber-500/15 border border-amber-500/30 px-2 py-1 rounded-lg mt-2">
+                            <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <span>
+                              {myTank.activePowerUp.type === 'TRIPLE_SHOT'
+                                ? '🔱 Đạn Ba Tia (+35% Tốc Độ)'
+                                : myTank.activePowerUp.type === 'SPEED_BOOST'
+                                ? '🚀 NITRO SIÊU TỐC (+85% Tốc Độ)'
+                                : myTank.activePowerUp.type === 'RAPID_FIRE'
+                                ? '⚡⚡ Nạp Đạn Thần Tốc (+35% Tốc Độ)'
+                                : myTank.activePowerUp.type === 'SHIELD'
+                                ? '🛡️ Lá Chắn Giáp (+35% Tốc Độ)'
+                                : '✚ Hộp Cứu Thương (+35% Tốc Độ)'}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Currently Loaded Random Ammunition */}
+                        {myTank.nextAmmoType && (
+                          <div className="flex items-center justify-between text-[11px] font-mono bg-slate-950/90 border border-slate-800 px-2.5 py-1.5 rounded-lg mt-2">
+                            <span className="text-slate-400">Đạn ngẫu nhiên nạp:</span>
+                            <span
+                              className="font-bold flex items-center gap-1.5"
+                              style={{ color: getAmmoInfo(myTank.nextAmmoType).color }}
+                            >
+                              <span>{getAmmoInfo(myTank.nextAmmoType).icon}</span>
+                              <span>{getAmmoInfo(myTank.nextAmmoType).name}</span>
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Combat Statistics */}
+                        <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between text-[11px] text-slate-400 font-mono">
+                          <span>Hạ gục: <strong className="text-emerald-400 font-bold">{myTank.kills}</strong></span>
+                          <span>Bị hạ: <strong className="text-rose-400">{myTank.deaths}</strong></span>
+                          <span>Chuỗi: <strong className="text-amber-400">{myTank.streak}🔥</strong></span>
                         </div>
-                      )}
-
-                      {/* Combat Statistics */}
-                      <div className="mt-2 pt-2 border-t border-slate-800 flex justify-between text-[11px] text-slate-400 font-mono">
-                        <span>Hạ gục: <strong className="text-emerald-400 font-bold">{myTank.kills}</strong></span>
-                        <span>Bị hạ: <strong className="text-rose-400">{myTank.deaths}</strong></span>
-                        <span>Chuỗi: <strong className="text-amber-400">{myTank.streak}🔥</strong></span>
                       </div>
-                    </div>
-                  )
-                ) : (
-                    <button
-                      onClick={() => setShowStats(true)}
-                      className="pointer-events-auto flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/50 text-emerald-300 px-3 py-1.5 rounded-xl shadow-xl text-xs backdrop-blur-md cursor-pointer transition-all self-start active:scale-95"
-                      title="Nhấn phím H để mở thanh status"
-                    >
-                      <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="font-bold">STATUS:</span>
-                      <span>HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}</span>
-                      {myTank.nextAmmoType && (
-                        <span style={{ color: getAmmoInfo(myTank.nextAmmoType).color }}>
-                          {getAmmoInfo(myTank.nextAmmoType).icon} {getAmmoInfo(myTank.nextAmmoType).name}
-                        </span>
-                      )}
-                      <span className="text-slate-500 text-[10px]">(Phím H)</span>
-                    </button>
-                  )}
-                </>
-              )}
+                    )
+                  ) : (
+                      <button
+                        onClick={() => setShowStats(true)}
+                        className="pointer-events-auto flex items-center gap-1.5 bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/50 text-emerald-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl shadow-xl text-[10px] sm:text-xs backdrop-blur-md cursor-pointer transition-all self-start active:scale-95"
+                        title="Nhấn phím H để mở thanh status"
+                      >
+                        <Activity className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
+                        <span className="font-bold">STATUS:</span>
+                        <span>HP {Math.max(0, Math.ceil(myTank.hp))}/{myTank.maxHp}</span>
+                        {myTank.nextAmmoType && (
+                          <span style={{ color: getAmmoInfo(myTank.nextAmmoType).color }}>
+                            {getAmmoInfo(myTank.nextAmmoType).icon} {getAmmoInfo(myTank.nextAmmoType).name}
+                          </span>
+                        )}
+                        <span className="text-slate-500 text-[9px] hidden sm:inline">(Phím H)</span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
-              {/* Chat Box */}
-              <ChatBox
-                messages={chatMessages}
-                onSendMessage={handleSendMessage}
-                isChatOpen={isChatOpen}
-                setIsChatOpen={setIsChatOpen}
+            {/* BOTTOM-CENTER: Tactical Skill Bar HUD for Desktop Keyboard */}
+            <div className={`hidden md:block absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in duration-200 ${
+              isShortLandscape ? "bottom-1 scale-75 sm:scale-85 origin-bottom" : "bottom-4 slide-in-from-bottom-3"
+            }`}>
+              <SkillBarHUD
+                myTank={myTank}
+                onUseSkill={handleUseSkill}
+                onUpgradeSkill={handleUpgradeSkill}
               />
             </div>
 
-            {/* BOTTOM-CENTER: Tactical Skill Bar HUD (Shift: Boost, Space: Shield, E: Mine, R: Barrage) */}
-            <div className={`absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in duration-200 ${
-              isShortLandscape ? 'bottom-1 scale-75 sm:scale-85 origin-bottom' : 'bottom-4 slide-in-from-bottom-3'
-            }`}>
-              <SkillBarHUD myTank={myTank} onUseSkill={handleUseSkill} />
-            </div>
-
-            {/* Mobile Virtual Controls */}
+            {/* Mobile Virtual Controls: Liên Quân Mobile Style Joystick, Skills & Spells */}
             <VirtualJoystick
+              myTank={myTank}
+              aimMode={aimMode}
+              onToggleAimMode={() => {
+                const nextMode = aimMode === 'MOVEMENT' ? 'MOUSE' : 'MOVEMENT';
+                setAimMode(nextMode);
+                sounds.playPowerUp();
+              }}
+              onUseSkill={handleUseSkill}
+              onUpgradeSkill={handleUpgradeSkill}
+              onRecall={handleRecall}
+              onQuickHeal={handleQuickHeal}
+              onSignalPing={handleSignalPing}
+              onOpenChat={() => setIsChatOpen(true)}
               onMoveChange={(move) => {
                 inputStateRef.current.up = move.up;
                 inputStateRef.current.down = move.down;
@@ -2141,16 +2797,9 @@ export default function App() {
               recentEvent={recentCombatEvent}
               myPlayerName={myTank?.name || profileRef.current.name}
               myPlayerId={myPlayerId}
+              isMobile={isMobile}
+              isShortLandscape={isShortLandscape}
             />
-
-            {/* Roguelike Level Up Perk Choice Modal Overlay */}
-            {myTank && myTank.pendingPerkChoices && myTank.pendingPerkChoices.length > 0 && !isSpectator && (
-              <PerkSelectModal
-                level={myTank.level || 1}
-                perkChoices={myTank.pendingPerkChoices}
-                onSelectPerk={handleSelectPerk}
-              />
-            )}
           </>
         )}
       </div>
@@ -2172,133 +2821,63 @@ export default function App() {
         onSaveCosmetics={handleSaveCosmetics}
       />
 
-      {/* 6. In-Game Audio & Tactical Announcer Settings Modal */}
-      {isAudioSettingsOpen && (
-        <div className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                  <Sliders className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white font-mono">ÂM THANH CHIẾN TRƯỜNG</h3>
-                  <p className="text-[11px] text-slate-400">Tùy chỉnh nhạc nền chiến trận & giọng đọc chiến sự</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsAudioSettingsOpen(false)}
-                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* 6. In-Game Settings & Tactical Customization Modal */}
+      <InGameSettingsModal
+        isOpen={isInGameSettingsOpen || isAudioSettingsOpen}
+        onClose={() => {
+          setIsInGameSettingsOpen(false);
+          setIsAudioSettingsOpen(false);
+        }}
+        isMuted={isMuted}
+        onToggleMute={handleToggleMute}
+        aimMode={aimMode}
+        onToggleAimMode={() => {
+          const nextMode = aimMode === 'MOVEMENT' ? 'MOUSE' : 'MOVEMENT';
+          setAimMode(nextMode);
+          sounds.playPowerUp();
+          setWeatherToast({
+            name: nextMode === 'MOVEMENT' ? 'BẮN THEO HƯỚNG XE' : 'BẮN THEO CHUỘT 360°',
+            icon: nextMode === 'MOVEMENT' ? '🎯' : '🖱️',
+            description: nextMode === 'MOVEMENT'
+              ? 'Pháo tự động nhắm theo hướng xe chạy (Tank 1990). Bấm Space / J / Nút Bắn để bắn!'
+              : 'Pháo xoay tự do 360° theo con trỏ chuột.',
+            themeColor: nextMode === 'MOVEMENT' ? '#10b981' : '#38bdf8',
+          });
+        }}
+        onOpenGarage={() => setIsGarageOpen(true)}
+        onOpenHelp={() => setIsControlsModalOpen(true)}
+        onExitGame={handleExitGame}
+        isSpectator={isSpectator}
+        onToggleSpectator={() => handleToggleSpectator()}
+        isShortLandscape={isShortLandscape}
+      />
 
-            <div className="space-y-4">
-              {/* 1. Epic Military Battle BGM Slider */}
-              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Music className="w-4 h-4 text-amber-400" />
-                    <span>Nhạc Nền Chiến Trận (BGM)</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const isPlaying = sounds.toggleMusic();
-                      setIsMusicPlaying(isPlaying);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold border transition-colors cursor-pointer ${
-                      isMusicPlaying
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-slate-800 text-slate-400 border-slate-700'
-                    }`}
-                  >
-                    {isMusicPlaying ? 'Đang Phát 🔊' : 'Đang Tắt 🔇'}
-                  </button>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={musicVol}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setMusicVol(val);
-                    sounds.setMusicVolume(val / 100);
-                  }}
-                  className="w-full accent-amber-500 cursor-pointer"
-                />
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>Im lặng</span>
-                  <span className="text-amber-300 font-bold">{musicVol}%</span>
-                  <span>100%</span>
-                </div>
-              </div>
+      {/* 7. Friends & Party Hub Modal (In-Game / Universal) */}
+      <FriendsModal
+        isOpen={isFriendsOpen}
+        onClose={() => setIsFriendsOpen(false)}
+        myPlayerName={profileRef.current.name}
+        myPlayerColor={profileRef.current.color}
+        myTankClass={profileRef.current.tankClass}
+        myRankRp={playerRankRp}
+        onJoinFriendRoom={(friendRoomId, friendMode) => {
+          handleJoinGame(
+            profileRef.current.name,
+            profileRef.current.color,
+            profileRef.current.tankClass,
+            friendMode,
+            0,
+            friendRoomId,
+            false,
+            profileRef.current.team,
+            profileRef.current.skinId,
+            profileRef.current.bulletTrail,
+            profileRef.current.roofDecal,
+            matchType
+          );
+        }}
+      />
 
-              {/* 2. Sound Effects (SFX) Slider */}
-              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-sky-400" />
-                    <span>Hiệu Ứng Bắn & Đạn Pháo (SFX)</span>
-                  </span>
-                  <span className="font-mono text-sky-300 text-xs font-bold">{sfxVol}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={sfxVol}
-                  onChange={(e) => {
-                    const val = Number(e.target.value);
-                    setSfxVol(val);
-                    sounds.setSfxVolume(val / 100);
-                  }}
-                  className="w-full accent-sky-500 cursor-pointer"
-                />
-              </div>
-
-              {/* 3. Tactical Voice Announcer Toggle */}
-              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Radio className="w-4 h-4 text-purple-400" />
-                  <div>
-                    <div className="text-xs font-bold text-white">Giọng Phát Thanh Viên (Voice)</div>
-                    <div className="text-[10px] text-slate-400">Đọc chuỗi hạ gục, thời tiết, boss xuất hiện, kỹ năng</div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !voiceEnabled;
-                    setVoiceEnabled(next);
-                    sounds.setVoiceEnabled(next);
-                    if (next) {
-                      sounds.announce('Tactical Announcer Activated', 'Đã kích hoạt giọng phát thanh viên chiến trường!');
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-all cursor-pointer ${
-                    voiceEnabled
-                      ? 'bg-purple-600 text-white border-purple-400 shadow-md shadow-purple-600/30'
-                      : 'bg-slate-800 text-slate-400 border-slate-700'
-                  }`}
-                >
-                  {voiceEnabled ? 'BẬT' : 'TẮT'}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsAudioSettingsOpen(false)}
-              className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-            >
-              Đóng Cài Đặt
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

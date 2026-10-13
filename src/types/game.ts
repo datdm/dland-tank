@@ -12,6 +12,7 @@ export interface TankStats {
   fireCooldown: number; // in ms
   bulletDamage: number;
   bulletSpeed: number;
+  firingRange: number; // Tầm bắn hiệu dụng (pixels / meters)
   colorPreset: string;
 }
 
@@ -24,26 +25,29 @@ export const TANK_CLASSES: Record<TankClass, TankStats> = {
     fireCooldown: 320,
     bulletDamage: 25,
     bulletSpeed: 10.5,
+    firingRange: 500,
     colorPreset: '#2563eb', // Blue
   },
   SCOUT: {
     name: 'Trinh Sát (Scout)',
-    description: 'Cực nhanh, bắn liên tục nhưng lượng máu thấp',
+    description: 'Cực nhanh, bắn tỉa tầm xa nhưng lượng máu thấp',
     speed: 6.0,
     maxHp: 80,
     fireCooldown: 210,
     bulletDamage: 18,
     bulletSpeed: 12.5,
+    firingRange: 620,
     colorPreset: '#16a34a', // Green
   },
   JUGGERNAUT: {
     name: 'Thiết Giáp (Juggernaut)',
-    description: 'Giáp siêu dày, đạn nổ cực mạnh nhưng di chuyển chậm',
+    description: 'Giáp siêu dày, pháo cối cự ly cận-trung chiến với sát thương cực đại',
     speed: 3.6,
     maxHp: 150,
     fireCooldown: 540,
     bulletDamage: 45,
     bulletSpeed: 9.0,
+    firingRange: 400,
     colorPreset: '#d97706', // Amber / Gold
   },
 };
@@ -558,6 +562,8 @@ export interface PlayerTank {
   slowUntil?: number;
   burnUntil?: number;
   skills?: TankSkillState;
+  skillPoints?: number;
+  skillLevels?: Record<SkillType, number>;
   level: number;
   exp: number;
   maxExp: number;
@@ -571,6 +577,12 @@ export interface PlayerTank {
   bulletTrail?: BulletTrailId;
   roofDecal?: RoofDecalId;
   lastKilledById?: string;
+  matchType?: MatchType;
+  rankTier?: RankTier;
+  rankRp?: number;
+  vx?: number;
+  vy?: number;
+  isDrifting?: boolean;
 }
 
 export type Team = 'RED' | 'BLUE' | 'NONE';
@@ -692,6 +704,7 @@ export interface LeaderboardEntry {
   streak: number;
   isBot: boolean;
   tankClass: TankClass;
+  rankTier?: RankTier;
 }
 
 export interface GameSnapshot {
@@ -710,6 +723,34 @@ export interface GameSnapshot {
   totalParticipants?: number;
   brWinner?: { id: string; name: string; color: string; kills: number } | null;
   bases?: BaseZone[];
+  weather?: WeatherType;
+  weatherSecondsLeft?: number;
+  hasBoss?: boolean;
+  hasAI?: boolean;
+  botCount?: number;
+  botDifficulty?: BotDifficulty;
+  isCustomRoom?: boolean;
+  customRoomName?: string;
+  customRoomCode?: string;
+  isRoomHost?: boolean;
+}
+
+export type BotDifficulty = 'EASY' | 'NORMAL' | 'HARD';
+
+export interface CustomRoomSummary {
+  id: string;
+  name: string;
+  mode: GameMode;
+  playerCount: number;
+  maxPlayers: number;
+  hasBoss: boolean;
+  hasAI: boolean;
+  botCount: number;
+  botDifficulty?: BotDifficulty;
+  weather?: WeatherType;
+  hasPassword?: boolean;
+  hostName?: string;
+  createdAt?: number;
 }
 
 export type GameMode = 'PUBLIC' | 'BATTLE_ROYALE' | 'TEAM_DEATHMATCH' | 'BOSS_RAID' | 'AI';
@@ -721,6 +762,8 @@ export interface PublicPlayerInfo {
   tankClass: TankClass;
   kills: number;
   score: number;
+  rankTier?: RankTier;
+  rankRp?: number;
 }
 
 export type ClientMessage =
@@ -730,6 +773,9 @@ export type ClientMessage =
       color: string;
       tankClass: TankClass;
       mode?: GameMode;
+      matchType?: MatchType;
+      rankTier?: RankTier;
+      rankRp?: number;
       roomId?: string;
       botCount?: number;
       isSpectator?: boolean;
@@ -737,6 +783,9 @@ export type ClientMessage =
       skinId?: TankSkinId;
       bulletTrail?: BulletTrailId;
       roofDecal?: RoofDecalId;
+      enableBoss?: boolean;
+      bossHp?: number;
+      initialWeather?: WeatherType;
     }
   | {
       type: 'INPUT';
@@ -749,6 +798,7 @@ export type ClientMessage =
       skillTrigger?: SkillType;
     }
   | { type: 'USE_SKILL'; skill: SkillType }
+  | { type: 'UPGRADE_SKILL'; skill: SkillType }
   | { type: 'RESPAWN' }
   | {
       type: 'SET_SPECTATOR';
@@ -766,7 +816,53 @@ export type ClientMessage =
       skinId?: TankSkinId;
       bulletTrail?: BulletTrailId;
       roofDecal?: RoofDecalId;
+    }
+  | { type: 'SET_WEATHER'; weather: WeatherType }
+  | {
+      type: 'QUEUE_JOIN';
+      matchType: MatchType;
+      name: string;
+      color: string;
+      tankClass: TankClass;
+      skinId?: TankSkinId;
+      bulletTrail?: BulletTrailId;
+      roofDecal?: RoofDecalId;
+      rankTier?: RankTier;
+      rankRp?: number;
+    }
+  | {
+      type: 'QUEUE_LEAVE';
+    }
+  | {
+      type: 'QUEUE_AUTO_FILL_BOTS';
+    }
+  | {
+      type: 'TEAM_PING';
+      x: number;
+      y: number;
+      pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
     };
+
+export interface QueueMatchedPlayer {
+  id: string;
+  name: string;
+  color: string;
+  tankClass: TankClass;
+  rankRp?: number;
+  rankTier?: RankTier;
+  team: Team;
+  isBot?: boolean;
+}
+
+export interface CustomRoomSummary {
+  id: string;
+  name: string;
+  playerCount: number;
+  botCount: number;
+  hasBoss: boolean;
+  mode: GameMode;
+  weather?: WeatherType;
+}
 
 export type ServerMessage =
   | {
@@ -789,6 +885,36 @@ export type ServerMessage =
       publicOnlineCount: number;
       publicPlayers: PublicPlayerInfo[];
       activeRoomId?: string;
+      customRooms?: CustomRoomSummary[];
+    }
+  | {
+      type: 'QUEUE_STATUS';
+      matchType: MatchType;
+      inQueue: boolean;
+      currentCount: number; // 1 to 6
+      targetCount: 6;
+      elapsedSeconds: number;
+      estimatedSeconds: number;
+      players: QueueMatchedPlayer[];
+    }
+  | {
+      type: 'QUEUE_MATCH_FOUND';
+      matchType: MatchType;
+      roomId: string;
+      myTeam: Team;
+      redTeam: QueueMatchedPlayer[];
+      blueTeam: QueueMatchedPlayer[];
+      countdown: number;
+    }
+  | {
+      type: 'TEAM_BEACON';
+      x: number;
+      y: number;
+      timestamp: number;
+      pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
+      senderName: string;
+      senderId: string;
+      team: Team;
     };
 
 export type WeatherType = 'DAWN' | 'DESERT' | 'RAIN' | 'SUNSET' | 'SNOW';
@@ -803,6 +929,10 @@ export interface WeatherInfo {
   gridColor: string;
   groundBgColor: string;
   description: string;
+  tacticalEffectTitle: string;
+  tacticalEffectDesc: string;
+  frictionFactor: number;
+  radarVisibilityRange?: number; // In world units: e.g. 520 for desert sandstorm
 }
 
 export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
@@ -816,6 +946,9 @@ export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
     gridColor: 'rgba(253, 186, 116, 0.12)',
     groundBgColor: '#0f172a',
     description: 'Ánh nắng ban mai vàng ấm, sương sớm dịu nhẹ phủ quanh chiến trường.',
+    tacticalEffectTitle: 'TẦM NHÌN QUANG ĐÃNG',
+    tacticalEffectDesc: 'Độ bám đường hoàn hảo, tầm quét radar Minimap tối đa không giới hạn.',
+    frictionFactor: 1.0,
   },
   DESERT: {
     type: 'DESERT',
@@ -827,6 +960,10 @@ export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
     gridColor: 'rgba(245, 158, 11, 0.14)',
     groundBgColor: '#1c160c',
     description: 'Nắng sa mạc vàng óng, gió cát sa mạc cuộn bay mờ ảo khắp đấu trường.',
+    tacticalEffectTitle: 'BÃO CÁT MÙ MINIMAP',
+    tacticalEffectDesc: 'Bão cát làm nhiễu sóng radar Minimap, che khuất đối thủ ngoài 520m; gió cát cản trở cơ động nhẹ.',
+    frictionFactor: 0.96,
+    radarVisibilityRange: 520,
   },
   RAIN: {
     type: 'RAIN',
@@ -838,6 +975,9 @@ export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
     gridColor: 'rgba(56, 189, 248, 0.12)',
     groundBgColor: '#061021',
     description: 'Mưa giông rào rạt, giọt mưa bắn nước và chớp sấm chói rọi khắp bản đồ.',
+    tacticalEffectTitle: 'ĐƯỜNG ƯỚT TRƠN MƯA',
+    tacticalEffectDesc: 'Mặt sân ướt sũng tạo tia nước bắn tung tóe, độ bám bánh xe giảm nhẹ 6%.',
+    frictionFactor: 0.94,
   },
   SUNSET: {
     type: 'SUNSET',
@@ -849,6 +989,9 @@ export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
     gridColor: 'rgba(244, 114, 182, 0.13)',
     groundBgColor: '#1a0d26',
     description: 'Bầu trời rực ánh tà dương huyền ảo, đốm lửa hoàng hôn lung linh.',
+    tacticalEffectTitle: 'CƠ ĐỘNG TIÊU CHUẨN',
+    tacticalEffectDesc: 'Gió chiều êm ả, động cơ vận hành ổn định và bám đường bình thường.',
+    frictionFactor: 1.0,
   },
   SNOW: {
     type: 'SNOW',
@@ -860,8 +1003,252 @@ export const WEATHER_CONFIGS: Record<WeatherType, WeatherInfo> = {
     gridColor: 'rgba(186, 230, 253, 0.14)',
     groundBgColor: '#081426',
     description: 'Bông tuyết trắng tinh khôi lãng đãng rơi, phủ một lớp băng giá lạnh.',
+    tacticalEffectTitle: 'MẶT BĂNG TRƠN TRƯỢT',
+    tacticalEffectDesc: 'Băng tuyết làm xe trơn trượt nhẹ khi bẻ lái hoặc phanh gấp, quán tính trượt vệt bánh trên tuyết.',
+    frictionFactor: 0.84,
   },
 };
 
 export const WEATHER_CYCLE: WeatherType[] = ['RAIN', 'DAWN', 'DESERT', 'SUNSET', 'SNOW'];
+
+// ==========================================
+// MATCH TYPE & COMPETITIVE RANK SYSTEM
+// ==========================================
+export type MatchType = 'CASUAL' | 'RANKED';
+
+export type RankTier =
+  | 'BRONZE'
+  | 'SILVER'
+  | 'GOLD'
+  | 'PLATINUM'
+  | 'DIAMOND'
+  | 'MASTER'
+  | 'CHALLENGER';
+
+export interface RankInfo {
+  tier: RankTier;
+  division: number; // 1 (highest) to 4
+  rp: number;
+  name: string;
+  vietnameseName: string;
+  badge: string;
+  icon: string;
+  color: string;
+  borderColor: string;
+  bgGradient: string;
+  minRp: number;
+  maxRp: number;
+}
+
+export const RANK_TIERS: Record<RankTier, {
+  tier: RankTier;
+  name: string;
+  vietnameseName: string;
+  icon: string;
+  color: string;
+  borderColor: string;
+  bgGradient: string;
+  minRp: number;
+  maxRp: number;
+}> = {
+  BRONZE: {
+    tier: 'BRONZE',
+    name: 'Bronze',
+    vietnameseName: 'Đồng Thiết Giáp',
+    icon: '🥉',
+    color: '#cd7f32',
+    borderColor: 'border-amber-700/60',
+    bgGradient: 'from-amber-950 via-stone-900 to-slate-950',
+    minRp: 0,
+    maxRp: 399,
+  },
+  SILVER: {
+    tier: 'SILVER',
+    name: 'Silver',
+    vietnameseName: 'Bạc Chiến Tuyến',
+    icon: '🥈',
+    color: '#cbd5e1',
+    borderColor: 'border-slate-400/60',
+    bgGradient: 'from-slate-800 via-slate-900 to-slate-950',
+    minRp: 400,
+    maxRp: 799,
+  },
+  GOLD: {
+    tier: 'GOLD',
+    name: 'Gold',
+    vietnameseName: 'Vàng Hoàng Kim',
+    icon: '🥇',
+    color: '#eab308',
+    borderColor: 'border-yellow-500/70',
+    bgGradient: 'from-amber-900/90 via-yellow-950/80 to-slate-950',
+    minRp: 800,
+    maxRp: 1199,
+  },
+  PLATINUM: {
+    tier: 'PLATINUM',
+    name: 'Platinum',
+    vietnameseName: 'Bạch Kim Tinh Anh',
+    icon: '💠',
+    color: '#38bdf8',
+    borderColor: 'border-sky-400/70',
+    bgGradient: 'from-cyan-950 via-sky-950 to-slate-950',
+    minRp: 1200,
+    maxRp: 1599,
+  },
+  DIAMOND: {
+    tier: 'DIAMOND',
+    name: 'Diamond',
+    vietnameseName: 'Kim Cương Bất Bại',
+    icon: '💎',
+    color: '#a855f7',
+    borderColor: 'border-purple-500/80',
+    bgGradient: 'from-purple-950 via-fuchsia-950 to-slate-950',
+    minRp: 1600,
+    maxRp: 1999,
+  },
+  MASTER: {
+    tier: 'MASTER',
+    name: 'Master',
+    vietnameseName: 'Cao Thủ Chiến Trường',
+    icon: '👑',
+    color: '#f43f5e',
+    borderColor: 'border-rose-500/90',
+    bgGradient: 'from-rose-950 via-red-950 to-slate-950',
+    minRp: 2000,
+    maxRp: 2499,
+  },
+  CHALLENGER: {
+    tier: 'CHALLENGER',
+    name: 'Challenger',
+    vietnameseName: 'Thách Đấu Huyền Thoại',
+    icon: '⚡',
+    color: '#f59e0b',
+    borderColor: 'border-amber-400 ring-2 ring-amber-400/40',
+    bgGradient: 'from-amber-900 via-orange-950 to-slate-950',
+    minRp: 2500,
+    maxRp: 99999,
+  },
+};
+
+export function getRankFromRp(rp: number): RankInfo & {
+  progressToNext: number;
+  nextTierRp: number;
+} {
+  const safeRp = Math.max(0, Math.round(rp));
+  let tier: RankTier = 'BRONZE';
+  if (safeRp >= 2500) tier = 'CHALLENGER';
+  else if (safeRp >= 2000) tier = 'MASTER';
+  else if (safeRp >= 1600) tier = 'DIAMOND';
+  else if (safeRp >= 1200) tier = 'PLATINUM';
+  else if (safeRp >= 800) tier = 'GOLD';
+  else if (safeRp >= 400) tier = 'SILVER';
+  else tier = 'BRONZE';
+
+  const cfg = RANK_TIERS[tier];
+  const tierRange = Math.max(1, cfg.maxRp - cfg.minRp + 1);
+  const rpInTier = safeRp - cfg.minRp;
+
+  // Calculate division (IV -> I)
+  let division = 4;
+  if (tier === 'CHALLENGER') {
+    division = 1;
+  } else if (tier === 'MASTER') {
+    division = rpInTier >= 250 ? 1 : 2;
+  } else {
+    const step = tierRange / 4;
+    division = Math.max(1, 4 - Math.floor(rpInTier / step));
+  }
+
+  const divisionRoman = ['I', 'II', 'III', 'IV'][division - 1] || 'IV';
+  const badge = tier === 'CHALLENGER' ? 'THÁCH ĐẤU' : `${cfg.name.toUpperCase()} ${divisionRoman}`;
+  const nextTierRp = cfg.maxRp + 1;
+  const progressToNext = tier === 'CHALLENGER' ? 100 : Math.min(100, Math.max(0, Math.round((rpInTier / tierRange) * 100)));
+
+  return {
+    tier,
+    division,
+    rp: safeRp,
+    name: `${cfg.name} ${divisionRoman}`,
+    vietnameseName: `${cfg.vietnameseName} ${divisionRoman}`,
+    badge,
+    icon: cfg.icon,
+    color: cfg.color,
+    borderColor: cfg.borderColor,
+    bgGradient: cfg.bgGradient,
+    minRp: cfg.minRp,
+    maxRp: cfg.maxRp,
+    progressToNext,
+    nextTierRp,
+  };
+}
+
+// ==========================================
+// FRIENDS & PARTY SYSTEM
+// ==========================================
+export interface FriendUser {
+  id: string;
+  friendCode: string;
+  name: string;
+  color: string;
+  tankClass: TankClass;
+  rankTier: RankTier;
+  rankRp: number;
+  status: 'ONLINE' | 'IN_BATTLE' | 'OFFLINE';
+  currentMode?: GameMode;
+  roomId?: string;
+  lastActive: string;
+}
+
+export const DEFAULT_SAMPLE_FRIENDS: FriendUser[] = [
+  {
+    id: 'f_1',
+    friendCode: 'DLAND-7701',
+    name: 'Đại Đội Trưởng Nam',
+    color: '#2563eb',
+    tankClass: 'JUGGERNAUT',
+    rankTier: 'DIAMOND',
+    rankRp: 1780,
+    status: 'ONLINE',
+    currentMode: 'PUBLIC',
+    roomId: 'public',
+    lastActive: 'Đang online',
+  },
+  {
+    id: 'f_2',
+    friendCode: 'DLAND-4299',
+    name: 'Xạ Thủ Hùng Ba',
+    color: '#dc2626',
+    tankClass: 'SCOUT',
+    rankTier: 'MASTER',
+    rankRp: 2150,
+    status: 'IN_BATTLE',
+    currentMode: 'BATTLE_ROYALE',
+    roomId: 'br',
+    lastActive: 'Trận Đấu Sinh Tồn Bo (GĐ 3)',
+  },
+  {
+    id: 'f_3',
+    friendCode: 'DLAND-1124',
+    name: 'Bách Phát Bách Trúng',
+    color: '#16a34a',
+    tankClass: 'STRIKER',
+    rankTier: 'PLATINUM',
+    rankRp: 1420,
+    status: 'IN_BATTLE',
+    currentMode: 'TEAM_DEATHMATCH',
+    roomId: 'tdm',
+    lastActive: 'Đấu Đội 5v5 (Phe Đỏ)',
+  },
+  {
+    id: 'f_4',
+    friendCode: 'DLAND-9005',
+    name: 'Hắc Thiết Giáp',
+    color: '#9333ea',
+    tankClass: 'JUGGERNAUT',
+    rankTier: 'GOLD',
+    rankRp: 980,
+    status: 'OFFLINE',
+    lastActive: '15 phút trước',
+  },
+];
 

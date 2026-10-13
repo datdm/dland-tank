@@ -15,6 +15,7 @@ import {
   RoofDecalId,
   ROOF_DECALS,
 } from '../types/game';
+import { DecalBadge } from './DecalBadge';
 import {
   Shield,
   Zap,
@@ -279,9 +280,9 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
       )}
 
       {/* Main Lobby Modal with Translucent Atmospheric Weather Backdrop */}
-      <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-y-auto transition-colors duration-500">
+      <div className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-6 overflow-y-auto transition-colors duration-500 select-none">
         <div
-          className="border rounded-2xl w-full max-w-xl p-4 sm:p-6 shadow-2xl my-auto animate-in fade-in zoom-in-95 duration-200 transition-all duration-300 backdrop-blur-xl"
+          className="border rounded-2xl md:rounded-3xl w-full max-w-xl md:max-w-2xl lg:max-w-3xl p-4 sm:p-6 md:p-8 max-h-[84vh] sm:max-h-[86vh] overflow-y-auto custom-scrollbar shadow-2xl my-auto animate-in fade-in zoom-in-95 duration-200 transition-all duration-300 backdrop-blur-xl"
           style={{
             backgroundColor: 'rgba(10, 16, 30, 0.92)',
             borderColor: `${activeWeatherCfg.themeColor}55`,
@@ -289,7 +290,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
           }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between pb-3.5 border-b border-slate-800">
+          <div className="flex items-center justify-between pb-3.5 md:pb-5 border-b border-slate-800">
             <div>
               <div className="flex items-center gap-2">
                 <span
@@ -297,17 +298,17 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     isSocketConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                   }`}
                 />
-                <span className="text-xs uppercase tracking-widest text-emerald-400 font-mono flex items-center gap-1.5">
+                <span className="text-xs md:text-sm uppercase tracking-widest text-emerald-400 font-mono flex items-center gap-1.5">
                   <Wifi className="w-3.5 h-3.5 text-emerald-400" />
                   {isSocketConnected ? 'Trực Tuyến: Đã Kết Nối' : 'Đang kết nối...'}
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight font-mono">
+                <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight font-mono">
                   DLAND TANK
                 </h1>
                 <span
-                  className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border flex items-center gap-1 shadow-sm"
+                  className="px-2.5 py-0.5 rounded-full text-[11px] md:text-xs font-mono font-bold border flex items-center gap-1 shadow-sm"
                   style={{
                     backgroundColor: `${activeWeatherCfg.themeColor}22`,
                     borderColor: `${activeWeatherCfg.themeColor}55`,
@@ -769,7 +770,11 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({
                     <span>•</span>
                     <span className="text-amber-300">Vệt đạn: <strong>{BULLET_TRAILS[bulletTrail]?.icon} {BULLET_TRAILS[bulletTrail]?.vietnameseName}</strong></span>
                     <span>•</span>
-                    <span className="text-sky-300">Cờ: <strong>{ROOF_DECALS[roofDecal]?.icon} {ROOF_DECALS[roofDecal]?.vietnameseName}</strong></span>
+                    <span className="text-sky-300 flex items-center gap-1">
+                      <span>Cờ:</span>
+                      <DecalBadge decalId={roofDecal} size="sm" showWavingAnimation={true} />
+                      <strong>{ROOF_DECALS[roofDecal]?.vietnameseName}</strong>
+                    </span>
                   </div>
                 </div>
               </div>

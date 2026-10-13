@@ -1,9 +1,18 @@
 import React from 'react';
-import { TankClass } from '../types/game';
+import {
+  TankClass,
+  TankSkinId,
+  RoofDecalId,
+  TANK_SKINS,
+  ROOF_DECALS,
+  TANK_CLASSES,
+} from '../types/game';
 
 interface TankVisualProps {
   tankClass: TankClass;
-  color: string;
+  color?: string;
+  skinId?: TankSkinId;
+  roofDecal?: RoofDecalId;
   size?: number;
   animated?: boolean;
   turretAngle?: number;
@@ -12,11 +21,16 @@ interface TankVisualProps {
 export const TankVisual: React.FC<TankVisualProps> = ({
   tankClass,
   color,
+  skinId,
+  roofDecal,
   size = 100,
   animated = false,
   turretAngle = 0,
 }) => {
-  const primaryColor = color;
+  const skin = skinId && skinId !== 'DEFAULT' ? TANK_SKINS[skinId] : null;
+  const primaryColor = skin ? skin.primaryColor : (color || TANK_CLASSES[tankClass]?.colorPreset || '#2563eb');
+  const secondaryColor = skin ? skin.secondaryColor : '#1d4ed8';
+  const decal = roofDecal && roofDecal !== 'NONE' ? ROOF_DECALS[roofDecal] : null;
   const treadColor = '#1e293b';
   const rollerColor = '#475569';
   const highlightColor = 'rgba(255, 255, 255, 0.25)';
@@ -66,8 +80,16 @@ export const TankVisual: React.FC<TankVisualProps> = ({
           <rect x="-4" y="-50" width="8" height="6" rx="1" fill="#0f172a" stroke={primaryColor} strokeWidth="1" />
           <circle cx="0" cy="0" r="13" fill="#0f172a" stroke="#020617" strokeWidth="1.5" />
           <polygon points="0,-15 10,-3 7,9 -7,9 -10,-3" fill={primaryColor} stroke="#020617" strokeWidth="1.5" />
-          <circle cx="0" cy="2" r="4" fill="#1e293b" stroke="#020617" strokeWidth="1" />
-          <circle cx="4" cy="-4" r="1.5" fill="#38bdf8" />
+          {decal && decal.id !== 'NONE' ? (
+            <text x="0" y="3" textAnchor="middle" dominantBaseline="middle" fontSize="10" className="select-none pointer-events-none">
+              {decal.icon}
+            </text>
+          ) : (
+            <>
+              <circle cx="0" cy="2" r="4" fill="#1e293b" stroke="#020617" strokeWidth="1" />
+              <circle cx="4" cy="-4" r="1.5" fill={secondaryColor} />
+            </>
+          )}
         </g>
       </svg>
     );
@@ -119,8 +141,16 @@ export const TankVisual: React.FC<TankVisualProps> = ({
             stroke="#020617"
             strokeWidth="1.5"
           />
-          <circle cx="-4" cy="2" r="4.5" fill="#1e293b" stroke="#020617" strokeWidth="1" />
-          <circle cx="5" cy="-2" r="2.5" fill="#ef4444" stroke="#020617" strokeWidth="0.8" />
+          {decal && decal.id !== 'NONE' ? (
+            <text x="0" y="3" textAnchor="middle" dominantBaseline="middle" fontSize="11" className="select-none pointer-events-none">
+              {decal.icon}
+            </text>
+          ) : (
+            <>
+              <circle cx="-4" cy="2" r="4.5" fill="#1e293b" stroke="#020617" strokeWidth="1" />
+              <circle cx="5" cy="-2" r="2.5" fill={secondaryColor} stroke="#020617" strokeWidth="0.8" />
+            </>
+          )}
         </g>
       </svg>
     );
@@ -165,8 +195,16 @@ export const TankVisual: React.FC<TankVisualProps> = ({
         <rect x="-5" y="-46" width="10" height="5" rx="1.5" fill="#0f172a" stroke="#fbbf24" strokeWidth="1" />
         <circle cx="0" cy="0" r="15" fill="#0f172a" stroke="#020617" strokeWidth="1.5" />
         <polygon points="0,-14 12,-4 10,9 -10,9 -12,-4" fill={primaryColor} stroke="#020617" strokeWidth="1.5" />
-        <circle cx="0" cy="1" r="4.5" fill="#1e293b" stroke="#020617" strokeWidth="1" />
-        <circle cx="4" cy="-4" r="2" fill="#38bdf8" />
+        {decal && decal.id !== 'NONE' ? (
+          <text x="0" y="3" textAnchor="middle" dominantBaseline="middle" fontSize="11" className="select-none pointer-events-none">
+            {decal.icon}
+          </text>
+        ) : (
+          <>
+            <circle cx="0" cy="1" r="4.5" fill="#1e293b" stroke="#020617" strokeWidth="1" />
+            <circle cx="4" cy="-4" r="2" fill={secondaryColor} />
+          </>
+        )}
       </g>
     </svg>
   );

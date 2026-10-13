@@ -7,6 +7,7 @@ interface ChatBoxProps {
   onSendMessage: (text: string) => void;
   isChatOpen: boolean;
   setIsChatOpen: (open: boolean) => void;
+  isMobile?: boolean;
 }
 
 export const ChatBox: React.FC<ChatBoxProps> = ({
@@ -14,10 +15,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   onSendMessage,
   isChatOpen,
   setIsChatOpen,
+  isMobile: propIsMobile,
 }) => {
   const [inputText, setInputText] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const isMobile =
+    propIsMobile ??
+    (typeof window !== 'undefined' &&
+      ('ontouchstart' in window || navigator.maxTouchPoints > 0 || window.innerWidth <= 768));
 
   // Auto scroll to bottom on new message or when opened
   useEffect(() => {
@@ -42,6 +49,115 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     setIsChatOpen(false);
   };
 
+  // 1. MOBILE CENTER DIALOG: Click Chat icon to show center modal dialog to read and send messages
+  if (isMobile) {
+    if (!isChatOpen) return null;
+
+    return (
+      <div
+        className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 select-none pointer-events-auto animate-in fade-in duration-150"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setIsChatOpen(false);
+        }}
+      >
+        <div className="bg-slate-900/98 border border-sky-500/60 rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-sm sm:max-w-md flex flex-col overflow-hidden max-h-[85vh] sm:max-h-[80vh] animate-in zoom-in-95 duration-150">
+          {/* Header */}
+          <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800 bg-slate-950/80">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-xl bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-sky-400">
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-xs sm:text-sm font-mono tracking-tight flex items-center gap-1.5">
+                  <span>KÊNH CHAT CHIẾN TRƯỜNG</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                </h3>
+                <p className="text-[9px] text-slate-400 font-mono">Xem tin nhắn & trò chuyện cùng toàn trận</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsChatOpen(false)}
+              className="w-7 h-7 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              title="Đóng chat"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Message Stream */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto p-3 space-y-1.5 min-h-[140px] max-h-[220px] sm:max-h-[260px] custom-scrollbar bg-slate-950/60"
+          >
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center text-slate-500 text-xs">
+                <MessageSquare className="w-8 h-8 text-slate-600 mb-1.5 opacity-60" />
+                <span>Chưa có tin nhắn nào trong trận đấu.</span>
+                <span className="text-[10px] text-slate-600 mt-0.5">Gửi tin nhắn đầu tiên để liên lạc đồng đội!</span>
+              </div>
+            ) : (
+              messages.map((msg, idx) => (
+                <div key={`${msg.id || 'msg'}_${idx}`} className="bg-slate-900/80 border border-slate-800/80 rounded-xl px-2.5 py-1.5 text-xs">
+                  <div className="flex items-baseline gap-1.5 flex-wrap">
+                    <span className="font-bold font-mono" style={{ color: msg.color || '#38bdf8' }}>
+                      {msg.senderName}:
+                    </span>
+                    <span className="text-slate-100 font-medium break-words">{msg.text}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Quick Communication Chips */}
+          <div className="px-2.5 py-1.5 border-t border-slate-800/80 bg-slate-900/90 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {[
+              '⚔️ Tấn công!',
+              '⚠️ Rút lui!',
+              '🚩 Cần tiếp viện!',
+              '🛡️ Giữ căn cứ!',
+              '👏 Đánh hay lắm!',
+              '❤️ Cảm ơn!',
+            ].map((quickText) => (
+              <button
+                key={quickText}
+                type="button"
+                onClick={() => {
+                  onSendMessage(quickText);
+                }}
+                className="whitespace-nowrap px-2 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 active:scale-95 border border-slate-700/80 text-[10px] font-medium text-slate-200 transition-all cursor-pointer shrink-0"
+              >
+                {quickText}
+              </button>
+            ))}
+          </div>
+
+          {/* Input Form */}
+          <form onSubmit={handleSubmit} className="p-2 sm:p-2.5 border-t border-slate-800 bg-slate-950/90 flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="Nhập nội dung chat..."
+              maxLength={120}
+              className="flex-1 bg-slate-900 border border-sky-500/50 text-white text-xs px-3 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-sky-400 placeholder-slate-500"
+            />
+            <button
+              type="submit"
+              className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1 shadow-lg active:scale-95 cursor-pointer shrink-0"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Gửi</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. DESKTOP BOTTOM-LEFT CHAT BOX
   return (
     <div className="flex flex-col w-80 sm:w-96 select-none">
       {/* Messages stream box */}

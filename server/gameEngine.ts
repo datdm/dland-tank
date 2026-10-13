@@ -27,12 +27,19 @@ import {
   BulletTrailId,
   RoofDecalId,
   CombatMedalType,
+  MatchType,
+  RankTier,
+  getRankFromRp,
+  WeatherType,
+  WEATHER_CYCLE,
+  WEATHER_CONFIGS,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
 export const WORLD_HEIGHT = 4200;
 export const TANK_RADIUS = 22;
 export const BULLET_RADIUS = 5;
+export const BOSS_RADIUS = 72;
 
 // Utility functions
 function distance(x1: number, y1: number, x2: number, y2: number): number {
@@ -75,6 +82,7 @@ export class GameEngine {
   private botTargetIds: Map<string, string | null> = new Map();
   private botTargetExpiry: Map<string, number> = new Map();
   private botNextMoveTime: Map<string, number> = new Map();
+  private botLastPositions: Map<string, { x: number; y: number; stuckCount: number }> = new Map();
 
   private maxBots: number = 0;
   private nextPowerUpSpawn: number = 0;
@@ -116,6 +124,7 @@ export class GameEngine {
 
   // World Boss Leviathan
   private boss: BossInfo | null = null;
+  private customBossEnabled: boolean = false;
   private nextBossSpawnTime: number = 0;
   private bossNextFireTime: number = 0;
   private bossNextSkillTime: number = 0;
@@ -123,9 +132,23 @@ export class GameEngine {
   private bossNextMoveChange: number = 0;
 
   private firstBloodOccurred: boolean = false;
+  private passiveExpTimer: number = 0;
+
+  // Weather Cycle System
+  private currentWeather: WeatherType = 'RAIN';
+  private weatherCycleTimer: number = 60;
 
   private generateEventId(): string {
     return `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${this.nextEventId++}`;
+  }
+
+  public getWeather(): WeatherType {
+    return this.currentWeather;
+  }
+
+  public setWeather(weather: WeatherType) {
+    this.currentWeather = weather;
+    this.weatherCycleTimer = 60;
   }
 
   constructor(defaultBots: number = 0, mode: GameMode = 'PUBLIC') {
@@ -381,6 +404,11 @@ export class GameEngine {
           break;
         }
       }
+      if (!collides && this.boss && this.boss.isAlive) {
+        if (distance(x, y, this.boss.x, this.boss.y) < BOSS_RADIUS + 120) {
+          collides = true;
+        }
+      }
       if (!collides) {
         return { x, y };
       }
@@ -397,7 +425,10 @@ export class GameEngine {
     team?: Team,
     skinId?: TankSkinId,
     bulletTrail?: BulletTrailId,
-    roofDecal?: RoofDecalId
+    roofDecal?: RoofDecalId,
+    matchType?: MatchType,
+    rankTier?: RankTier,
+    rankRp?: number
   ): PlayerTank {
     const stats = TANK_CLASSES[tankClass] || TANK_CLASSES.STRIKER;
     let spawn = this.findSafeSpawnPosition();
@@ -469,9 +500,16 @@ export class GameEngine {
         barrageUntil: 0,
         barrageCooldownUntil: 0,
       },
+      skillPoints: 0,
+      skillLevels: {
+        BOOST: 1,
+        SHIELD: 1,
+        MINE: 1,
+        BARRAGE: 1,
+      },
       level: 1,
       exp: 0,
-      maxExp: 100,
+      maxExp: 75,
       perks: [],
       pendingPerkChoices: [],
       team: assignedTeam,
@@ -480,6 +518,9 @@ export class GameEngine {
       skinId: chosenSkin,
       bulletTrail: chosenTrail,
       roofDecal: chosenDecal,
+      matchType: matchType || 'CASUAL',
+      rankTier: rankTier || (isBot ? 'SILVER' : 'GOLD'),
+      rankRp: rankRp || (isBot ? 600 : 850),
     };
 
     this.tanks.set(id, tank);
@@ -532,7 +573,9 @@ export class GameEngine {
       this.tanks.delete(id);
       this.tankInputs.delete(id);
       this.botTargetIds.delete(id);
+      this.botTargetExpiry.delete(id);
       this.botNextMoveTime.delete(id);
+      this.botLastPositions.delete(id);
     }
   }
 
@@ -560,14 +603,29 @@ export class GameEngine {
       };
     }
 
+    if (!tank.skillLevels) {
+      tank.skillLevels = { BOOST: 1, SHIELD: 1, MINE: 1, BARRAGE: 1 };
+    }
+
+    const stats = TANK_CLASSES[tank.tankClass];
+
+    const lvl = tank.level || 1;
+    // Cooldown reduction from Level (-2.5% per level above 1) + Rapid Reload perk (-20%)
+    const perkCdMult = tank.perks.includes('RAPID_RELOAD') ? 0.8 : 1.0;
+    const levelCdMult = Math.max(0.75, 1 - (lvl - 1) * 0.025);
+    const cdMult = perkCdMult * levelCdMult;
+
     if (skill === 'BOOST') {
       if (now < tank.skills.boostCooldownUntil) return false;
-      tank.skills.boostUntil = now + 3500; // 3.5s duration
-      tank.skills.boostCooldownUntil = now + 10000; // 10s cooldown
+      const skillLvl = tank.skillLevels.BOOST || 1;
+      const boostDuration = 3500 + (skillLvl - 1) * 600;
+      const baseCd = Math.max(5000, 10000 - (skillLvl - 1) * 1000);
+      tank.skills.boostUntil = now + boostDuration;
+      tank.skills.boostCooldownUntil = now + Math.round(baseCd * cdMult);
       this.addEvent({
         id: this.generateEventId(),
         type: 'powerup',
-        text: `⚡ ${tank.name} kích hoạt [Shift] TĂNG TỐC NITRO (+85% Tốc độ 3.5s)!`,
+        text: `⚡ [CHIÊU 1 - LV.${skillLvl}] ${tank.name} kích hoạt TĂNG TỐC NITRO (+${80 + skillLvl * 10}% Tốc độ ${(boostDuration / 1000).toFixed(1)}s)!`,
         timestamp: now,
         color: '#38bdf8',
       });
@@ -576,12 +634,19 @@ export class GameEngine {
 
     if (skill === 'SHIELD') {
       if (now < tank.skills.shieldCooldownUntil) return false;
-      tank.skills.shieldUntil = now + 3500; // 3.5s duration
-      tank.skills.shieldCooldownUntil = now + 12000; // 12s cooldown
+      const skillLvl = tank.skillLevels.SHIELD || 1;
+      const shieldDuration = 3500 + (skillLvl - 1) * 750;
+      const baseCd = Math.max(6000, 12000 - (skillLvl - 1) * 1250);
+      tank.skills.shieldUntil = now + shieldDuration;
+      tank.skills.shieldCooldownUntil = now + Math.round(baseCd * cdMult);
+      if (skillLvl >= 3) {
+        const heal = (skillLvl - 2) * 15;
+        tank.hp = Math.min(stats.maxHp, tank.hp + heal);
+      }
       this.addEvent({
         id: this.generateEventId(),
         type: 'powerup',
-        text: `🛡️ ${tank.name} bật [Space] KHIÊN TỪ TRƯỜNG PHÒNG THỦ (Chặn sát thương 3.5s)!`,
+        text: `🛡️ [CHIÊU 2 - LV.${skillLvl}] ${tank.name} bật KHIÊN TỪ TRƯỜNG (Bảo vệ ${(shieldDuration / 1000).toFixed(1)}s)!`,
         timestamp: now,
         color: '#00f0ff',
       });
@@ -590,7 +655,10 @@ export class GameEngine {
 
     if (skill === 'MINE') {
       if (now < tank.skills.mineCooldownUntil) return false;
-      tank.skills.mineCooldownUntil = now + 10000; // 10s cooldown
+      const skillLvl = tank.skillLevels.MINE || 1;
+      const baseCd = Math.max(5000, 10000 - (skillLvl - 1) * 1000);
+      tank.skills.mineCooldownUntil = now + Math.round(baseCd * cdMult);
+      const mineDamage = 70 + (skillLvl - 1) * 25;
       this.landmines.push({
         id: `mine_${now}_${Math.random().toString(36).substring(2, 6)}`,
         ownerId: tank.id,
@@ -603,7 +671,7 @@ export class GameEngine {
       this.addEvent({
         id: this.generateEventId(),
         type: 'powerup',
-        text: `💣 ${tank.name} gài [E] MÌN BẪY PLASMA (Nổ 70 sát thương & Làm chậm)!`,
+        text: `💣 [CHIÊU 3 - LV.${skillLvl}] ${tank.name} gài MÌN BẪY PLASMA (Nổ ${mineDamage} sát thương & Làm chậm)!`,
         timestamp: now,
         color: '#eab308',
       });
@@ -612,12 +680,15 @@ export class GameEngine {
 
     if (skill === 'BARRAGE') {
       if (now < tank.skills.barrageCooldownUntil) return false;
-      tank.skills.barrageUntil = now + 4000; // 4s duration
-      tank.skills.barrageCooldownUntil = now + 15000; // 15s cooldown
+      const skillLvl = tank.skillLevels.BARRAGE || 1;
+      const barrageDuration = 4000 + (skillLvl - 1) * 600;
+      const baseCd = Math.max(8000, 15000 - (skillLvl - 1) * 1500);
+      tank.skills.barrageUntil = now + barrageDuration;
+      tank.skills.barrageCooldownUntil = now + Math.round(baseCd * cdMult);
       this.addEvent({
         id: this.generateEventId(),
         type: 'powerup',
-        text: `🔥 ${tank.name} kích hoạt [R] PHÁO CAO TỐC LIÊN HOÀN (Tốc bắn x2)!`,
+        text: `🔥 [CHIÊU CUỐI - LV.${skillLvl}] ${tank.name} kích hoạt PHÁO SIÊU TỐC (Xả đạn x2 trong ${(barrageDuration / 1000).toFixed(1)}s)!`,
         timestamp: now,
         color: '#f43f5e',
       });
@@ -669,40 +740,64 @@ export class GameEngine {
       const healBonus = Math.floor(tank.maxHp * 0.35);
       tank.hp = Math.min(tank.maxHp, tank.hp + healBonus);
 
-      // Generate 3 random perks that tank doesn't have yet
-      const availableCards = Object.values(ALL_PERK_CARDS).filter(
-        (card) => !tank.perks.includes(card.id)
-      );
+      // Level up grants +1 Skill Point to upgrade skills (Cộng chiêu thức)
+      tank.skillPoints = (tank.skillPoints || 0) + 1;
+      tank.pendingPerkChoices = [];
 
-      if (availableCards.length > 0) {
-        // Shuffle and pick up to 3
-        const shuffled = [...availableCards].sort(() => Math.random() - 0.5);
-        const choices = shuffled.slice(0, Math.min(3, shuffled.length));
+      if (!tank.skillLevels) {
+        tank.skillLevels = { BOOST: 1, SHIELD: 1, MINE: 1, BARRAGE: 1 };
+      }
 
-        if (tank.isBot) {
-          // Bot automatically picks the first perk card!
-          const chosen = choices[0];
-          if (chosen) {
-            tank.perks.push(chosen.id);
-            if (chosen.id === 'HEAVY_HULL') {
-              tank.maxHp += 30;
-              tank.hp += 30;
-            }
-          }
-          tank.pendingPerkChoices = [];
-        } else {
-          tank.pendingPerkChoices = choices;
+      if (tank.isBot) {
+        const skills: SkillType[] = ['BOOST', 'SHIELD', 'MINE', 'BARRAGE'];
+        const upgradable = skills.filter((s) => (tank.skillLevels?.[s] || 1) < 5);
+        if (upgradable.length > 0) {
+          const picked = upgradable[Math.floor(Math.random() * upgradable.length)];
+          tank.skillLevels[picked] = (tank.skillLevels[picked] || 1) + 1;
+          tank.skillPoints = Math.max(0, (tank.skillPoints || 0) - 1);
         }
       }
 
       this.addEvent({
         id: this.generateEventId(),
         type: 'powerup',
-        text: `⚡ [THĂNG CẤP] ${tank.name} đã vươn lên CẤP MỚI LEVEL ${tank.level}!`,
+        text: `⚡ [THĂNG CẤP LV.${tank.level}] ${tank.name} nhận +1 ĐIỂM CỘNG CHIÊU (Bấm dấu + quanh kỹ năng để nâng cấp)!`,
         timestamp: Date.now(),
         color: '#f59e0b',
       });
     }
+  }
+
+  public upgradeSkill(playerId: string, skill: SkillType): boolean {
+    const tank = this.tanks.get(playerId);
+    if (!tank || tank.isDead) return false;
+
+    if (!tank.skillLevels) {
+      tank.skillLevels = { BOOST: 1, SHIELD: 1, MINE: 1, BARRAGE: 1 };
+    }
+    const currentLvl = tank.skillLevels[skill] || 1;
+    if (currentLvl >= 5) return false;
+    if ((tank.skillPoints || 0) <= 0) return false;
+
+    tank.skillPoints = Math.max(0, (tank.skillPoints || 0) - 1);
+    tank.skillLevels[skill] = currentLvl + 1;
+
+    const skillNames: Record<SkillType, string> = {
+      BOOST: 'Tăng Tốc Nitro',
+      SHIELD: 'Khiên Từ Trường',
+      MINE: 'Mìn Bẫy Plasma',
+      BARRAGE: 'Pháo Siêu Tốc',
+    };
+
+    this.addEvent({
+      id: this.generateEventId(),
+      type: 'powerup',
+      text: `⭐ [CỘNG CHIÊU] ${tank.name} đã nâng cấp [${skillNames[skill]}] lên CẤP ${tank.skillLevels[skill]}!`,
+      timestamp: Date.now(),
+      color: '#fbbf24',
+    });
+
+    return true;
   }
 
   public selectPerk(playerId: string, perkId: PerkId): boolean {
@@ -773,6 +868,25 @@ export class GameEngine {
     return this.tanks;
   }
 
+  public getBoss(): BossInfo | null {
+    return this.boss;
+  }
+
+  public getMode(): GameMode {
+    return this.mode;
+  }
+
+  public setBossEnabled(enabled: boolean, customMaxHp?: number) {
+    this.customBossEnabled = enabled;
+    if (enabled) {
+      if (!this.boss || !this.boss.isAlive) {
+        this.spawnBoss(customMaxHp);
+      }
+    } else {
+      this.boss = null;
+    }
+  }
+
   public setMaxBots(count: number) {
     this.maxBots = clamp(count, 0, 14);
     this.syncBots();
@@ -820,6 +934,15 @@ export class GameEngine {
   public update(deltaTime: number) {
     const now = Date.now();
 
+    // 0. Update dynamic weather cycle timer (1-minute cycle)
+    this.weatherCycleTimer -= deltaTime;
+    if (this.weatherCycleTimer <= 0) {
+      this.weatherCycleTimer = 60;
+      const currentIdx = WEATHER_CYCLE.indexOf(this.currentWeather);
+      const nextIdx = (currentIdx + 1) % WEATHER_CYCLE.length;
+      this.currentWeather = WEATHER_CYCLE[nextIdx];
+    }
+
     // 1. Update power-up spawns
     if (now > this.nextPowerUpSpawn && this.powerUps.length < 14) {
       const types: PowerUpType[] = ['TRIPLE_SHOT', 'SPEED_BOOST', 'SHIELD', 'REPAIR', 'RAPID_FIRE'];
@@ -844,7 +967,18 @@ export class GameEngine {
     // 3. Bot AI updates
     this.updateBots(now);
 
-    // 3. Process Tank Movements & Fire
+    // 3.5. Passive In-Combat EXP Gain (+3 EXP every 1.5s for all active tanks)
+    this.passiveExpTimer = (this.passiveExpTimer || 0) + deltaTime;
+    if (this.passiveExpTimer >= 1.5) {
+      this.passiveExpTimer = 0;
+      for (const tank of this.tanks.values()) {
+        if (!tank.isDead) {
+          this.addTankExp(tank, 3);
+        }
+      }
+    }
+
+    // 4. Process Tank Movements & Fire
     for (const [id, tank] of this.tanks) {
       if (tank.isDead) {
         if (tank.respawnCountdown > 0) {
@@ -889,7 +1023,7 @@ export class GameEngine {
       const currentSpeed = baseStats.speed * speedMult;
       tank.speed = currentSpeed;
 
-      // 8-Directional Responsive Movement with Wall Sliding
+      // 8-Directional Movement with Dynamic Weather Mobility Physics
       let moveX = 0;
       let moveY = 0;
 
@@ -898,17 +1032,92 @@ export class GameEngine {
       if (input.up) moveY -= 1;
       if (input.down) moveY += 1;
 
-      if (moveX !== 0 || moveY !== 0) {
+      const isInputMoving = moveX !== 0 || moveY !== 0;
+      let targetVx = 0;
+      let targetVy = 0;
+
+      if (isInputMoving) {
         const moveAngle = Math.atan2(moveY, moveX);
-        const vx = Math.cos(moveAngle) * currentSpeed;
-        const vy = Math.sin(moveAngle) * currentSpeed;
+        targetVx = Math.cos(moveAngle) * currentSpeed;
+        targetVy = Math.sin(moveAngle) * currentSpeed;
 
-        // Smoothly rotate tank hull towards movement direction
+        // Steering rotation factor: slightly looser on slippery snow or thick desert sand
+        const rotFactor = this.currentWeather === 'SNOW' ? 0.22 : (this.currentWeather === 'DESERT' ? 0.28 : 0.35);
         const angleDiff = Math.atan2(Math.sin(moveAngle - tank.angle), Math.cos(moveAngle - tank.angle));
-        tank.angle += angleDiff * 0.35;
+        tank.angle += angleDiff * rotFactor;
+      }
 
-        const nextX = tank.x + vx;
-        const nextY = tank.y + vy;
+      // Dynamic Weather Mobility Physics (Snow Ice Drift, Desert Wind & Drag, Rain Wet Track)
+      let curVx = tank.vx || 0;
+      let curVy = tank.vy || 0;
+      let isDrifting = false;
+
+      if (this.currentWeather === 'SNOW') {
+        // Snow (Bão tuyết): Slippery ice drift physics!
+        if (isInputMoving) {
+          // Slight traction slippage: blends previous momentum with target input
+          curVx = curVx * 0.84 + targetVx * 0.16;
+          curVy = curVy * 0.84 + targetVy * 0.16;
+          const vAngle = Math.atan2(curVy, curVx);
+          const slipAngle = Math.abs(Math.atan2(Math.sin(vAngle - tank.angle), Math.cos(vAngle - tank.angle)));
+          if (slipAngle > 0.38 && Math.hypot(curVx, curVy) > 1.2) {
+            isDrifting = true;
+          }
+        } else {
+          // Released directional keys: slide on ice with gradual smooth deceleration
+          curVx *= 0.89;
+          curVy *= 0.89;
+          if (Math.hypot(curVx, curVy) < 0.15) {
+            curVx = 0;
+            curVy = 0;
+          } else {
+            isDrifting = true;
+          }
+        }
+      } else if (this.currentWeather === 'DESERT') {
+        // Desert (Bão cát): Periodic sandstorm wind gusts & sand resistance
+        const windCycle = Math.sin(now / 3200);
+        const gustStrength = Math.max(0, windCycle * 0.7 + 0.25);
+        const windPushX = 0.5 * gustStrength;
+        const windPushY = 0.2 * gustStrength;
+
+        if (isInputMoving) {
+          curVx = targetVx * 0.95 + windPushX;
+          curVy = targetVy * 0.95 + windPushY;
+        } else {
+          curVx *= 0.35;
+          curVy *= 0.35;
+          if (Math.hypot(curVx, curVy) < 0.1) {
+            curVx = 0;
+            curVy = 0;
+          }
+        }
+      } else if (this.currentWeather === 'RAIN') {
+        // Rain: Wet roads, slight hydroplaning
+        if (isInputMoving) {
+          curVx = curVx * 0.35 + targetVx * 0.65;
+          curVy = curVy * 0.35 + targetVy * 0.65;
+        } else {
+          curVx *= 0.4;
+          curVy *= 0.4;
+          if (Math.hypot(curVx, curVy) < 0.1) {
+            curVx = 0;
+            curVy = 0;
+          }
+        }
+      } else {
+        // Standard DAWN / SUNSET: Direct crisp control
+        curVx = targetVx;
+        curVy = targetVy;
+      }
+
+      tank.vx = curVx;
+      tank.vy = curVy;
+      tank.isDrifting = isDrifting;
+
+      if (curVx !== 0 || curVy !== 0) {
+        const nextX = tank.x + curVx;
+        const nextY = tank.y + curVy;
 
         // Check X movement with sliding
         let canMoveX = true;
@@ -926,6 +1135,12 @@ export class GameEngine {
               canMoveX = false;
               break;
             }
+          }
+        }
+        // Physical collision with Boss Leviathan on X-axis (prevent driving through boss)
+        if (canMoveX && this.boss && this.boss.isAlive) {
+          if (distance(nextX, tank.y, this.boss.x, this.boss.y) < TANK_RADIUS + BOSS_RADIUS) {
+            canMoveX = false;
           }
         }
 
@@ -947,13 +1162,52 @@ export class GameEngine {
             }
           }
         }
+        // Physical collision with Boss Leviathan on Y-axis (prevent driving through boss)
+        if (canMoveY && this.boss && this.boss.isAlive) {
+          if (distance(tank.x, nextY, this.boss.x, this.boss.y) < TANK_RADIUS + BOSS_RADIUS) {
+            canMoveY = false;
+          }
+        }
+
+        // Compound diagonal collision check with Boss Leviathan (prevent corner clipping)
+        if (canMoveX && canMoveY && this.boss && this.boss.isAlive) {
+          if (distance(nextX, nextY, this.boss.x, this.boss.y) < TANK_RADIUS + BOSS_RADIUS) {
+            const distIfXOnly = distance(nextX, tank.y, this.boss.x, this.boss.y);
+            const distIfYOnly = distance(tank.x, nextY, this.boss.x, this.boss.y);
+            if (distIfXOnly >= distIfYOnly) {
+              canMoveY = false;
+            } else {
+              canMoveX = false;
+            }
+          }
+        }
 
         if (canMoveX) {
           tank.x = clamp(nextX, TANK_RADIUS + 44, WORLD_WIDTH - TANK_RADIUS - 44);
+        } else {
+          tank.vx = 0;
         }
         if (canMoveY) {
           tank.y = clamp(nextY, TANK_RADIUS + 44, WORLD_HEIGHT - TANK_RADIUS - 44);
+        } else {
+          tank.vy = 0;
         }
+
+        // Failsafe: If tank is already inside Boss Leviathan boundary, gently push it outside
+        if (this.boss && this.boss.isAlive) {
+          const dToBoss = distance(tank.x, tank.y, this.boss.x, this.boss.y);
+          const minSafeDist = TANK_RADIUS + BOSS_RADIUS;
+          if (dToBoss < minSafeDist && dToBoss > 0) {
+            const pushAngle = Math.atan2(tank.y - this.boss.y, tank.x - this.boss.x);
+            const pushDist = minSafeDist - dToBoss;
+            tank.x = clamp(tank.x + Math.cos(pushAngle) * pushDist, TANK_RADIUS + 44, WORLD_WIDTH - TANK_RADIUS - 44);
+            tank.y = clamp(tank.y + Math.sin(pushAngle) * pushDist, TANK_RADIUS + 44, WORLD_HEIGHT - TANK_RADIUS - 44);
+          }
+        }
+      } else {
+        tank.vx = 0;
+        tank.vy = 0;
+        tank.isDrifting = false;
       }
 
       // Turret rotation
@@ -1025,6 +1279,13 @@ export class GameEngine {
               const idx = this.obstacles.indexOf(obs);
               if (idx !== -1) {
                 this.obstacles.splice(idx, 1);
+                if (b.shooterId) {
+                  const shooter = this.tanks.get(b.shooterId);
+                  if (shooter && !shooter.isDead) {
+                    shooter.score += 15;
+                    this.addTankExp(shooter, 20);
+                  }
+                }
               }
             }
           }
@@ -1042,7 +1303,16 @@ export class GameEngine {
                 otherObs.hp -= 25;
                 if (otherObs.hp <= 0) {
                   const idx = this.obstacles.indexOf(otherObs);
-                  if (idx !== -1) this.obstacles.splice(idx, 1);
+                  if (idx !== -1) {
+                    this.obstacles.splice(idx, 1);
+                    if (b.shooterId) {
+                      const shooter = this.tanks.get(b.shooterId);
+                      if (shooter && !shooter.isDead) {
+                        shooter.score += 15;
+                        this.addTankExp(shooter, 20);
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1089,7 +1359,7 @@ export class GameEngine {
 
       // Collision with World Boss Leviathan
       if (this.boss && this.boss.isAlive) {
-        if (distance(b.x, b.y, this.boss.x, this.boss.y) < 65 + BULLET_RADIUS) {
+        if (distance(b.x, b.y, this.boss.x, this.boss.y) < BOSS_RADIUS + BULLET_RADIUS) {
           this.damageBoss(b);
           this.bullets.splice(i, 1);
           continue;
@@ -1107,6 +1377,36 @@ export class GameEngine {
 
       // Arm after 400ms
       if (now - mine.createdAt < 400) continue;
+
+      // Boss Leviathan triggers landmine if stepping over it
+      if (this.boss && this.boss.isAlive && distance(mine.x, mine.y, this.boss.x, this.boss.y) < BOSS_RADIUS + 12) {
+        const dmg = 85;
+        if (this.boss.shield > 0) {
+          if (this.boss.shield >= dmg) {
+            this.boss.shield -= dmg;
+          } else {
+            const rem = dmg - this.boss.shield;
+            this.boss.shield = 0;
+            this.boss.hp = Math.max(0, this.boss.hp - rem);
+          }
+        } else {
+          this.boss.hp = Math.max(0, this.boss.hp - dmg);
+        }
+        const owner = this.tanks.get(mine.ownerId);
+        if (owner) {
+          owner.score += 25;
+          this.addTankExp(owner, 35);
+        }
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'powerup',
+          text: `💥 [MÌN PLASMA] Boss Leviathan đạp trúng Mìn Plasma của ${owner ? owner.name : 'Chiến Binh'} (-85 HP)!`,
+          timestamp: now,
+          color: '#f97316',
+        });
+        this.landmines.splice(mi, 1);
+        continue;
+      }
 
       for (const [tid, target] of this.tanks) {
         if (target.isDead || tid === mine.ownerId) continue;
@@ -1169,6 +1469,7 @@ export class GameEngine {
 
   private fireBullet(tank: PlayerTank) {
     const stats = TANK_CLASSES[tank.tankClass];
+    const baseRange = stats.firingRange || 750;
     const muzzleDist = TANK_RADIUS + 16;
     const spawnX = tank.x + Math.cos(tank.turretAngle) * muzzleDist;
     const spawnY = tank.y + Math.sin(tank.turretAngle) * muzzleDist;
@@ -1191,7 +1492,7 @@ export class GameEngine {
           vx: Math.cos(angle) * stats.bulletSpeed,
           vy: Math.sin(angle) * stats.bulletSpeed,
           damage: Math.round(stats.bulletDamage * 0.85),
-          rangeLeft: 950,
+          rangeLeft: Math.round(baseRange * 0.95),
           color: '#fbbf24',
           isHeavy: tank.tankClass === 'JUGGERNAUT',
           modifier: 'TRIPLE',
@@ -1213,7 +1514,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * (stats.bulletSpeed * 0.9),
         vy: Math.sin(tank.turretAngle) * (stats.bulletSpeed * 0.9),
         damage: Math.round(stats.bulletDamage * 1.45),
-        rangeLeft: 1050,
+        rangeLeft: Math.round(baseRange * 1.05),
         color: '#ef4444',
         isHeavy: true,
         modifier: 'EXPLOSIVE',
@@ -1234,7 +1535,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * (stats.bulletSpeed * 1.8),
         vy: Math.sin(tank.turretAngle) * (stats.bulletSpeed * 1.8),
         damage: Math.round(stats.bulletDamage * 1.15),
-        rangeLeft: 1350,
+        rangeLeft: Math.round(baseRange * 1.35),
         color: '#00f0ff',
         isHeavy: false,
         modifier: 'PLASMA',
@@ -1255,7 +1556,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * stats.bulletSpeed,
         vy: Math.sin(tank.turretAngle) * stats.bulletSpeed,
         damage: stats.bulletDamage,
-        rangeLeft: 1050,
+        rangeLeft: baseRange,
         color: '#38bdf8',
         isHeavy: false,
         modifier: 'CRYO',
@@ -1276,7 +1577,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * stats.bulletSpeed,
         vy: Math.sin(tank.turretAngle) * stats.bulletSpeed,
         damage: Math.round(stats.bulletDamage * 1.1),
-        rangeLeft: 1050,
+        rangeLeft: baseRange,
         color: '#f97316',
         isHeavy: false,
         modifier: 'INCENDIARY',
@@ -1297,7 +1598,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * (stats.bulletSpeed * 1.1),
         vy: Math.sin(tank.turretAngle) * (stats.bulletSpeed * 1.1),
         damage: stats.bulletDamage,
-        rangeLeft: 1250,
+        rangeLeft: Math.round(baseRange * 1.15),
         color: '#c084fc',
         isHeavy: false,
         modifier: 'RICOCHET',
@@ -1319,7 +1620,7 @@ export class GameEngine {
         vx: Math.cos(tank.turretAngle) * (stats.bulletSpeed * 1.25),
         vy: Math.sin(tank.turretAngle) * (stats.bulletSpeed * 1.25),
         damage: Math.round(stats.bulletDamage * 1.2),
-        rangeLeft: 1250,
+        rangeLeft: Math.round(baseRange * 1.2),
         color: '#10b981',
         isHeavy: true,
         modifier: 'PIERCING',
@@ -1340,7 +1641,7 @@ export class GameEngine {
       vx: Math.cos(tank.turretAngle) * stats.bulletSpeed,
       vy: Math.sin(tank.turretAngle) * stats.bulletSpeed,
       damage: stats.bulletDamage,
-      rangeLeft: 1000,
+      rangeLeft: baseRange,
       color: tank.color,
       isHeavy: tank.tankClass === 'JUGGERNAUT',
       modifier: 'STANDARD',
@@ -1352,38 +1653,6 @@ export class GameEngine {
 
   private applyPowerUp(tank: PlayerTank, type: PowerUpType) {
     const stats = TANK_CLASSES[tank.tankClass];
-    if (type === 'REPAIR') {
-      tank.hp = Math.min(stats.maxHp, tank.hp + 50);
-      tank.activePowerUp = {
-        type: 'REPAIR',
-        expiresAt: Date.now() + 15000,
-      };
-      this.addEvent({
-        id: this.generateEventId(),
-        type: 'powerup',
-        text: `⚡ ${tank.name} nhặt Hộp Cứu Thương (+50 HP & +35% Tốc độ linh kiện!)`,
-        timestamp: Date.now(),
-        color: '#10b981',
-      });
-      return;
-    }
-
-    if (type === 'SHIELD') {
-      tank.shield = 100;
-      tank.activePowerUp = {
-        type: 'SHIELD',
-        expiresAt: Date.now() + 15000,
-      };
-      this.addEvent({
-        id: this.generateEventId(),
-        type: 'powerup',
-        text: `🛡️ ${tank.name} kích hoạt Lá Chắn (+100 Giáp & +35% Tốc độ linh kiện!)`,
-        timestamp: Date.now(),
-        color: '#38bdf8',
-      });
-      return;
-    }
-
     const typeNames: Record<PowerUpType, string> = {
       TRIPLE_SHOT: 'Đạn Ba Tia & +35% Tốc độ linh kiện',
       SPEED_BOOST: 'NITRO SIÊU TỐC (+85% Tốc độ cực bốc)',
@@ -1392,17 +1661,34 @@ export class GameEngine {
       RAPID_FIRE: 'Nạp Đạn Thần Tốc & +35% Tốc độ linh kiện',
     };
 
-    tank.activePowerUp = {
-      type,
-      expiresAt: Date.now() + 15000,
-    };
+    if (type === 'REPAIR') {
+      tank.hp = Math.min(stats.maxHp, tank.hp + 50);
+      tank.activePowerUp = {
+        type: 'REPAIR',
+        expiresAt: Date.now() + 15000,
+      };
+    } else if (type === 'SHIELD') {
+      tank.shield = 100;
+      tank.activePowerUp = {
+        type: 'SHIELD',
+        expiresAt: Date.now() + 15000,
+      };
+    } else {
+      tank.activePowerUp = {
+        type,
+        expiresAt: Date.now() + 15000,
+      };
+    }
+
+    // Award supply crate pickup EXP (+50 EXP for all crate pickups)
+    this.addTankExp(tank, 50);
 
     this.addEvent({
       id: this.generateEventId(),
       type: 'powerup',
-      text: `🚀 ${tank.name} nhặt linh kiện: ${typeNames[type]}!`,
+      text: `🚀 ${tank.name} nhặt linh kiện: ${typeNames[type]} (+50 EXP)!`,
       timestamp: Date.now(),
-      color: '#f59e0b',
+      color: type === 'REPAIR' ? '#10b981' : type === 'SHIELD' ? '#38bdf8' : '#f59e0b',
     });
   }
 
@@ -1429,6 +1715,14 @@ export class GameEngine {
     }
 
     target.hp -= damageRemaining;
+
+    // Award hit combat EXP to shooter
+    if (bullet.shooterId && bullet.shooterId !== target.id) {
+      const shooter = this.tanks.get(bullet.shooterId);
+      if (shooter && !shooter.isDead) {
+        this.addTankExp(shooter, Math.max(8, Math.round(bullet.damage * 0.6)));
+      }
+    }
 
     // Retaliation: If a bot is damaged, it retaliates against whoever attacked it
     if (target.isBot && bullet.shooterId && bullet.shooterId !== target.id) {
@@ -1476,6 +1770,9 @@ export class GameEngine {
         const streakBonus = Math.min(shooter.streak * 20, 100);
         shooter.score += 100 + streakBonus;
 
+        // Award major enemy elimination EXP (+120 EXP + Level bonus)
+        this.addTankExp(shooter, 120 + (target.level || 1) * 25);
+
         // TDM Score Update
         if (this.mode === 'TEAM_DEATHMATCH') {
           if (shooter.team === 'RED') {
@@ -1494,6 +1791,7 @@ export class GameEngine {
               timestamp: Date.now(),
               color: '#ef4444',
             });
+            this.rewardTdmRankedWinners('RED');
           } else if (this.teamScore.blue >= this.teamScore.targetKills && !this.teamScore.winner) {
             this.teamScore.winner = 'BLUE';
             this.tdmRoundResetTimer = Date.now() + 10000;
@@ -1504,6 +1802,7 @@ export class GameEngine {
               timestamp: Date.now(),
               color: '#3b82f6',
             });
+            this.rewardTdmRankedWinners('BLUE');
           }
         }
 
@@ -1593,13 +1892,59 @@ export class GameEngine {
           streak: shooter.streak,
           medal: awardedMedal,
         });
+
+        // ==========================================
+        // RANKED MATCHMAKING: RP GAIN / LOSS LOGIC
+        // ==========================================
+        if (shooter.matchType === 'RANKED') {
+          const rpGain = awardedMedal ? 35 : 25;
+          const oldRank = getRankFromRp(shooter.rankRp || 850);
+          shooter.rankRp = Math.min(9999, (shooter.rankRp || 850) + rpGain);
+          const newRank = getRankFromRp(shooter.rankRp);
+          shooter.rankTier = newRank.tier;
+
+          let rankText = `🏆 [ĐẤU RANK] ${shooter.name} +${rpGain} RP (${shooter.rankRp} RP - ${newRank.name})`;
+          if (newRank.tier !== oldRank.tier) {
+            rankText = `🎉 [THĂNG HẠNG ĐẤU RANK] ${shooter.name} đã thăng lên ${newRank.vietnameseName} (${shooter.rankRp} RP)!`;
+          }
+
+          this.addEvent({
+            id: this.generateEventId(),
+            type: 'powerup',
+            text: rankText,
+            timestamp: Date.now(),
+            color: '#fbbf24',
+          });
+        }
+
+        if (target.matchType === 'RANKED') {
+          const rpLoss = 15;
+          const oldRank = getRankFromRp(target.rankRp || 850);
+          target.rankRp = Math.max(0, (target.rankRp || 850) - rpLoss);
+          const newRank = getRankFromRp(target.rankRp);
+          target.rankTier = newRank.tier;
+
+          let rankLossText = `🔻 [ĐẤU RANK] ${target.name} bị trừ -${rpLoss} RP (${target.rankRp} RP - ${newRank.name})`;
+          if (newRank.tier !== oldRank.tier) {
+            rankLossText = `⚠️ [TỤT HẠNG ĐẤU RANK] ${target.name} đã rơi xuống ${newRank.vietnameseName} (${target.rankRp} RP).`;
+          }
+
+          this.addEvent({
+            id: this.generateEventId(),
+            type: 'powerup',
+            text: rankLossText,
+            timestamp: Date.now(),
+            color: '#f87171',
+          });
+        }
       }
     }
   }
 
-  public spawnBoss() {
+  public spawnBoss(customMaxHp?: number) {
     const cx = WORLD_WIDTH / 2;
     const cy = WORLD_HEIGHT / 2;
+    const maxHp = customMaxHp || 1000;
     this.boss = {
       id: `boss_leviathan_${Date.now()}`,
       name: 'Siêu Xe Tăng Leviathan',
@@ -1607,9 +1952,9 @@ export class GameEngine {
       y: cy,
       angle: 0,
       turretAngle: 0,
-      hp: 1000,
-      maxHp: 1000,
-      shield: 250,
+      hp: maxHp,
+      maxHp: maxHp,
+      shield: Math.round(maxHp * 0.25),
       isAlive: true,
       phase: 1,
       nextSkillTime: Date.now() + 20000,
@@ -1618,7 +1963,7 @@ export class GameEngine {
     this.addEvent({
       id: this.generateEventId(),
       type: 'powerup',
-      text: `☠️ [WORLD BOSS] SIÊU XE TĂNG BOSS LEVIATHAN (1000 HP, 4 NÒNG PHÁO) ĐÃ XUẤT HIỆN TẠI PHÁO ĐÀI TRUNG TÂM!`,
+      text: `☠️ [WORLD BOSS] SIÊU XE TĂNG BOSS LEVIATHAN (${maxHp} HP, 4 NÒNG PHÁO) ĐÃ XUẤT HIỆN TẠI PHÁO ĐÀI TRUNG TÂM!`,
       timestamp: Date.now(),
       color: '#f59e0b',
     });
@@ -1695,7 +2040,7 @@ export class GameEngine {
       if (this.boss) {
         this.boss.respawnTimeLeft = Math.max(0, (this.nextBossSpawnTime - now) / 1000);
       }
-      if (this.mode === 'BOSS_RAID' || (this.mode === 'PUBLIC' && now >= this.nextBossSpawnTime)) {
+      if (this.mode === 'BOSS_RAID' || (this.mode === 'PUBLIC' && now >= this.nextBossSpawnTime) || (this.customBossEnabled && now >= this.nextBossSpawnTime)) {
         if (!this.boss || now >= this.nextBossSpawnTime) {
           this.spawnBoss();
         }
@@ -1721,6 +2066,19 @@ export class GameEngine {
       boss.angle += 0.02;
     } else {
       this.bossMoveAngle = Math.atan2(cy - boss.y, cx - boss.x);
+    }
+
+    // Physical Dreadnought Collision: Boss pushes tanks outward so they cannot clip inside
+    for (const tank of this.tanks.values()) {
+      if (tank.isDead) continue;
+      const d = distance(boss.x, boss.y, tank.x, tank.y);
+      const minD = TANK_RADIUS + BOSS_RADIUS;
+      if (d < minD) {
+        const pushAngle = d > 0 ? Math.atan2(tank.y - boss.y, tank.x - boss.x) : Math.random() * Math.PI * 2;
+        const overlap = Math.max(1, minD - d);
+        tank.x = clamp(tank.x + Math.cos(pushAngle) * overlap, TANK_RADIUS + 44, WORLD_WIDTH - TANK_RADIUS - 44);
+        tank.y = clamp(tank.y + Math.sin(pushAngle) * overlap, TANK_RADIUS + 44, WORLD_HEIGHT - TANK_RADIUS - 44);
+      }
     }
 
     let nearestTank: PlayerTank | null = null;
@@ -1912,6 +2270,20 @@ export class GameEngine {
           timestamp: now,
           color: '#f59e0b',
         });
+
+        if (survivor.matchType === 'RANKED') {
+          const brBonus = 80;
+          survivor.rankRp = Math.min(9999, (survivor.rankRp || 850) + brBonus);
+          const newRank = getRankFromRp(survivor.rankRp);
+          survivor.rankTier = newRank.tier;
+          this.addEvent({
+            id: this.generateEventId(),
+            type: 'powerup',
+            text: `👑 [QUÁN QUÂN ĐẤU RANK] ${survivor.name} +${brBonus} RP (${survivor.rankRp} RP - ${newRank.vietnameseName})!`,
+            timestamp: now,
+            color: '#fbbf24',
+          });
+        }
       }
     }
   }
@@ -1972,8 +2344,34 @@ export class GameEngine {
     }
   }
 
+  private rewardTdmRankedWinners(winnerTeam: Team) {
+    for (const tank of this.tanks.values()) {
+      if (!tank.isBot && tank.team === winnerTeam && tank.matchType === 'RANKED') {
+        const bonus = 40;
+        tank.rankRp = Math.min(9999, (tank.rankRp || 850) + bonus);
+        const newRank = getRankFromRp(tank.rankRp);
+        tank.rankTier = newRank.tier;
+        this.addEvent({
+          id: this.generateEventId(),
+          type: 'powerup',
+          text: `🎖️ [THẮNG ĐẤU ĐỘI RANK] ${tank.name} +${bonus} RP (${tank.rankRp} RP - ${newRank.vietnameseName})!`,
+          timestamp: Date.now(),
+          color: '#fbbf24',
+        });
+      }
+    }
+  }
+
   private updateBots(now: number) {
-    if (this.maxBots === 0) return;
+    // If there are bot tanks in the match, always execute AI update logic for them!
+    let hasAnyBot = false;
+    for (const tank of this.tanks.values()) {
+      if (tank.isBot && !tank.isDead) {
+        hasAnyBot = true;
+        break;
+      }
+    }
+    if (!hasAnyBot) return;
 
     for (const [id, tank] of this.tanks) {
       if (!tank.isBot || tank.isDead) continue;
@@ -1985,100 +2383,195 @@ export class GameEngine {
         this.tankInputs.set(id, input);
       }
 
-      // Check current target
+      // Check obstacle stuck detection
+      let lastPos = this.botLastPositions.get(id);
+      if (!lastPos) {
+        lastPos = { x: tank.x, y: tank.y, stuckCount: 0 };
+        this.botLastPositions.set(id, lastPos);
+      } else {
+        const dMoved = distance(tank.x, tank.y, lastPos.x, lastPos.y);
+        if (dMoved < 4 && (input.up || input.down || input.left || input.right)) {
+          lastPos.stuckCount = (lastPos.stuckCount || 0) + 1;
+        } else {
+          lastPos.stuckCount = 0;
+        }
+        lastPos.x = tank.x;
+        lastPos.y = tank.y;
+      }
+
+      // -------------------------------------------------------------
+      // 1. TARGET SELECTION BASED ON CURRENT GAME MODE OBJECTIVE
+      // -------------------------------------------------------------
       let currentTargetId = this.botTargetIds.get(id);
       let targetExpiry = this.botTargetExpiry.get(id) || 0;
       let target: PlayerTank | null = null;
 
+      // Validate cached target
       if (currentTargetId && now < targetExpiry) {
         const potentialTarget = this.tanks.get(currentTargetId);
         if (potentialTarget && !potentialTarget.isDead) {
-          const d = distance(tank.x, tank.y, potentialTarget.x, potentialTarget.y);
-          if (d < 1600) {
-            target = potentialTarget;
+          // If in TDM, never target allies
+          const isAlly = this.mode === 'TEAM_DEATHMATCH' && tank.team && potentialTarget.team && tank.team === potentialTarget.team && tank.team !== 'NONE';
+          if (!isAlly) {
+            const d = distance(tank.x, tank.y, potentialTarget.x, potentialTarget.y);
+            if (d < 1800) {
+              target = potentialTarget;
+            }
           }
         }
       }
 
-      // If no valid target or target expired, pick a random opponent from all nearby tanks (both bots and players)
+      // If no valid target, pick target based strictly on game mode
       if (!target) {
         const candidates: { tank: PlayerTank; dist: number }[] = [];
         for (const [otherId, otherTank] of this.tanks) {
           if (otherId === id || otherTank.isDead) continue;
+          // STRICT TDM OBJECTIVE: Never target friendly team members!
+          if (this.mode === 'TEAM_DEATHMATCH') {
+            if (tank.team && otherTank.team && tank.team === otherTank.team && tank.team !== 'NONE') {
+              continue;
+            }
+          }
           const dist = distance(tank.x, tank.y, otherTank.x, otherTank.y);
-          if (dist < 1500) {
+          if (dist < 1800) {
             candidates.push({ tank: otherTank, dist });
           }
         }
 
         if (candidates.length > 0) {
-          // Sort by distance and pick randomly among top nearby opponents
+          // Prioritize closest enemy players/bots
           candidates.sort((a, b) => a.dist - b.dist);
           const topSlice = candidates.slice(0, Math.min(3, candidates.length));
           const chosen = topSlice[Math.floor(Math.random() * topSlice.length)];
           target = chosen.tank;
           this.botTargetIds.set(id, target.id);
-          // Lock target for 2.5 - 5.5s then evaluate another random opponent
-          this.botTargetExpiry.set(id, now + 2500 + Math.random() * 3000);
+          this.botTargetExpiry.set(id, now + 2500 + Math.random() * 2500);
         } else {
           this.botTargetIds.set(id, null);
         }
       }
 
+      // -------------------------------------------------------------
+      // 2. MODE-SPECIFIC OBJECTIVE OVERRIDES (BOSS RAID & BATTLE ROYALE)
+      // -------------------------------------------------------------
+      // Objective in BOSS_RAID: If Boss Leviathan is alive, prioritize Boss!
+      const isBossObjective = (this.mode === 'BOSS_RAID' || (this.mode === 'PUBLIC' && this.boss?.isAlive)) && this.boss && this.boss.isAlive;
+      const distToBoss = isBossObjective && this.boss ? distance(tank.x, tank.y, this.boss.x, this.boss.y) : 99999;
+      const targetBoss = isBossObjective && this.boss && (distToBoss < 1600 || !target);
+
+      // Objective in BATTLE_ROYALE: Move into safe zone if storm is closing in
+      const distToStormCenter = distance(tank.x, tank.y, this.stormZone.centerX, this.stormZone.centerY);
+      const isOutsideOrNearStorm = this.mode === 'BATTLE_ROYALE' && this.stormZone.active && (distToStormCenter > this.stormZone.currentRadius * 0.75);
+
       const distToTarget = target ? distance(tank.x, tank.y, target.x, target.y) : 9999;
 
-      if (now > nextMove) {
-        this.botNextMoveTime.set(id, now + 400 + Math.random() * 600);
+      // -------------------------------------------------------------
+      // 3. TACTICAL MOVEMENT LOGIC
+      // -------------------------------------------------------------
+      if (now > nextMove || (lastPos && lastPos.stuckCount >= 2)) {
+        this.botNextMoveTime.set(id, now + 350 + Math.random() * 450);
 
-        if (target) {
-          // Tactical movement: advance, strafe and circle around target
+        // A. If stuck against obstacle/wall: Unstuck maneuver
+        if (lastPos && lastPos.stuckCount >= 2) {
+          lastPos.stuckCount = 0;
+          const unstuckAngle = Math.random() * Math.PI * 2;
+          input.left = Math.cos(unstuckAngle) < -0.2;
+          input.right = Math.cos(unstuckAngle) > 0.2;
+          input.up = Math.sin(unstuckAngle) < -0.2;
+          input.down = Math.sin(unstuckAngle) > 0.2;
+        }
+        // B. Battle Royale: Escape storm priority
+        else if (isOutsideOrNearStorm) {
+          const angleToSafety = Math.atan2(this.stormZone.centerY - tank.y, this.stormZone.centerX - tank.x);
+          const jitter = (Math.random() - 0.5) * 0.4;
+          const moveAngle = angleToSafety + jitter;
+          input.left = Math.cos(moveAngle) < -0.25;
+          input.right = Math.cos(moveAngle) > 0.25;
+          input.up = Math.sin(moveAngle) < -0.25;
+          input.down = Math.sin(moveAngle) > 0.25;
+        }
+        // C. Boss Raid: Move toward Boss Leviathan & circle around it
+        else if (targetBoss && this.boss) {
+          const angleToBoss = Math.atan2(this.boss.y - tank.y, this.boss.x - tank.x);
+          const strafe = Math.sin(now / 500 + id.charCodeAt(0)) > 0 ? 0.6 : -0.6;
+          let moveAngle = angleToBoss + strafe;
+          // Keep optimal shooting distance from boss (~350 - 550)
+          if (distToBoss < 320) {
+            moveAngle = angleToBoss + Math.PI; // back away
+          }
+          input.left = Math.cos(moveAngle) < -0.3;
+          input.right = Math.cos(moveAngle) > 0.3;
+          input.up = Math.sin(moveAngle) < -0.3;
+          input.down = Math.sin(moveAngle) > 0.3;
+        }
+        // D. Combat with target enemy tank
+        else if (target) {
           const angleToTarget = Math.atan2(target.y - tank.y, target.x - tank.x);
-          const strafe = Math.sin(now / 400 + id.charCodeAt(0)) > 0 ? 0.45 : -0.45;
+          const strafe = Math.sin(now / 400 + id.charCodeAt(0)) > 0 ? 0.5 : -0.5;
           const moveAngle = angleToTarget + strafe;
-
           input.left = Math.cos(moveAngle) < -0.3;
           input.right = Math.cos(moveAngle) > 0.3;
           input.up = Math.sin(moveAngle) < -0.3;
           input.down = Math.sin(moveAngle) > 0.3;
 
-          if (distToTarget < 130) {
-            // Back away if too close
+          // Back away if too close (< 140)
+          if (distToTarget < 140) {
             input.left = target.x > tank.x;
             input.right = target.x < tank.x;
             input.up = target.y > tank.y;
             input.down = target.y < tank.y;
           }
-        } else {
-          // Patrol wander
-          input.up = Math.random() > 0.38;
-          input.down = Math.random() > 0.62;
-          input.left = Math.random() > 0.5;
-          input.right = Math.random() > 0.5 && !input.left;
+        }
+        // E. Patrol wander towards center arena
+        else {
+          const cx = 2100;
+          const cy = 2100;
+          const angleToCenter = Math.atan2(cy - tank.y, cx - tank.x);
+          const wanderAngle = angleToCenter + (Math.random() - 0.5) * 1.5;
+          input.left = Math.cos(wanderAngle) < -0.3;
+          input.right = Math.cos(wanderAngle) > 0.3;
+          input.up = Math.sin(wanderAngle) < -0.3;
+          input.down = Math.sin(wanderAngle) > 0.3;
         }
       }
 
-      // Aim turret and fire randomly at target
-      if (target) {
+      // -------------------------------------------------------------
+      // 4. AIMING & SHOOTING DISCIPLINE
+      // -------------------------------------------------------------
+      if (targetBoss && this.boss) {
+        // Aim directly at Boss Leviathan
+        const jitter = (Math.random() - 0.5) * 0.15;
+        input.turretAngle = Math.atan2(this.boss.y - tank.y, this.boss.x - tank.x) + jitter;
+        input.isFiring = distToBoss < 1100 && Math.random() > 0.05;
+
+        // Skill usage against boss
+        if (tank.hp < tank.maxHp * 0.4 && Math.random() < 0.1) {
+          this.useSkill(id, 'SHIELD');
+        } else if (distToBoss < 600 && Math.random() < 0.08) {
+          this.useSkill(id, 'BARRAGE');
+        } else if (distToBoss > 400 && distToBoss < 900 && Math.random() < 0.05) {
+          this.useSkill(id, 'BOOST');
+        }
+      } else if (target) {
         // Aim with lead prediction and random angular jitter
-        const jitter = (Math.random() - 0.5) * 0.22;
+        const jitter = (Math.random() - 0.5) * 0.18;
         input.turretAngle = Math.atan2(target.y - tank.y, target.x - tank.x) + jitter;
-        // Fire when in range (< 950) with active combat cadence
-        input.isFiring = distToTarget < 950 && Math.random() > 0.08;
+        input.isFiring = distToTarget < 950 && Math.random() > 0.06;
 
         // Tactical Bot Skill Usage
         if (tank.hp < tank.maxHp * 0.45 && Math.random() < 0.08) {
           this.useSkill(id, 'SHIELD');
         } else if (distToTarget > 350 && distToTarget < 850 && Math.random() < 0.04) {
           this.useSkill(id, 'BOOST');
-        } else if (distToTarget < 550 && Math.random() < 0.05) {
+        } else if (distToTarget < 550 && Math.random() < 0.06) {
           this.useSkill(id, 'BARRAGE');
-        } else if (distToTarget < 180 && Math.random() < 0.04) {
+        } else if (distToTarget < 180 && Math.random() < 0.05) {
           this.useSkill(id, 'MINE');
         }
       } else {
-        // Occasional random suppressive shot in patrolling direction
-        if (Math.random() < 0.06) {
-          input.turretAngle = tank.angle + (Math.random() - 0.5) * 0.8;
+        // Occasional suppressive shot in moving direction
+        if (Math.random() < 0.04) {
+          input.turretAngle = tank.angle + (Math.random() - 0.5) * 0.6;
           input.isFiring = true;
         } else {
           input.turretAngle = tank.angle;
@@ -2087,7 +2580,6 @@ export class GameEngine {
       }
     }
   }
-
   public getSnapshot(): GameSnapshot {
     const sortedLeaderboard: LeaderboardEntry[] = Array.from(this.tanks.values())
       .map((t) => ({
@@ -2100,6 +2592,7 @@ export class GameEngine {
         streak: t.streak,
         isBot: t.isBot,
         tankClass: t.tankClass,
+        rankTier: t.rankTier,
       }))
       .sort((a, b) => b.score - a.score || b.kills - a.kills)
       .slice(0, 10);
@@ -2122,6 +2615,8 @@ export class GameEngine {
       totalParticipants: this.tanks.size,
       brWinner: this.brWinner,
       bases: this.bases,
+      weather: this.currentWeather,
+      weatherSecondsLeft: Math.round(this.weatherCycleTimer),
     };
   }
 
