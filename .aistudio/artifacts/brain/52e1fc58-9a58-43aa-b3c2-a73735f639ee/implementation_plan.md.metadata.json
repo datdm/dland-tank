@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for complete user account and player tank name synchronization across Google login, guest mode, main menu, local storage, and battle sessions.",
-  "updatedAt":  "2026-10-11T12:54:44.492689091Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Tài liệu chi tiết hệ thống Số lượng đạn cố định, Thời gian hồi đạn (Ammo Reload) và Chế độ Chuyển đổi loại đạn (Weapon Switch Mode) cùng với các phím tắt, giao diện HUD BulletModeSelector và tối ưu hóa GameCanvas.",
+  "updatedAt": "2026-10-13T12:12:47.606687498Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

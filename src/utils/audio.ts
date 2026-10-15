@@ -5,8 +5,8 @@
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
-  private isMuted: boolean = false;
-  private isMusicMuted: boolean = false;
+  private isMuted: boolean = true;
+  private isMusicMuted: boolean = true;
   private sfxVolume: number = 0.7;
   private musicVolume: number = 0.35;
   private voiceEnabled: boolean = true;

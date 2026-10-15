@@ -38,8 +38,8 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [activeTab, setActiveTab] = useState<'profile' | 'google_login' | 'guest_config'>(
     currentUser.isGuest ? 'google_login' : 'profile'
   );
-  const [googleEmail, setGoogleEmail] = useState('dangminhdat.qnam@gmail.com');
-  const [googleName, setGoogleName] = useState('Minh Đạt (Chỉ Huy)');
+  const [googleEmail, setGoogleEmail] = useState('');
+  const [googleName, setGoogleName] = useState('');
   const [syncGuestData, setSyncGuestData] = useState(true);
   const [guestName, setGuestName] = useState(currentUser.name);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -376,49 +376,39 @@ export const AccountModal: React.FC<AccountModalProps> = ({
                 </p>
               </div>
 
-              {/* Quick Google Account Selection Card */}
+              {/* Clean Google Account Input & Authentication */}
               <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 space-y-3">
-                <div className="text-xs font-bold text-amber-300 font-mono flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Tài khoản Google đề xuất:</span>
-                </div>
-
-                <div
-                  onClick={() => handlePerformGoogleLogin('dangminhdat.qnam@gmail.com', 'Minh Đạt (Chỉ Huy)')}
-                  className="p-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700 hover:border-amber-400 flex items-center justify-between cursor-pointer transition-all active:scale-98 group shadow-md"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 flex items-center justify-center font-bold text-sm">
-                      D
-                    </div>
-                    <div className="text-left font-mono">
-                      <div className="text-xs font-bold text-white group-hover:text-amber-300 transition-colors">
-                        dangminhdat.qnam@gmail.com
-                      </div>
-                      <div className="text-[10px] text-slate-400">Tài khoản Google chính chủ</div>
-                    </div>
-                  </div>
-                  <div className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold border border-amber-500/40 group-hover:bg-amber-500 group-hover:text-slate-950 transition-all">
-                    Chọn Ngay
+                <div className="space-y-1.5">
+                  <label className="text-xs font-mono font-bold text-slate-200 block">
+                    Nhập địa chỉ Email Google của bạn:
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={googleEmail}
+                      onChange={(e) => {
+                        setGoogleEmail(e.target.value);
+                        if (!googleName && e.target.value.includes('@')) {
+                          const username = e.target.value.split('@')[0];
+                          setGoogleName(username.charAt(0).toUpperCase() + username.slice(1));
+                        }
+                      }}
+                      placeholder="tenban@gmail.com"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-600 text-white font-mono text-xs focus:border-amber-400 focus:outline-none transition-colors"
+                    />
                   </div>
                 </div>
 
-                {/* Custom Google Account Input */}
-                <div className="space-y-2 pt-2 border-t border-slate-800/80">
-                  <label className="text-[11px] font-mono text-slate-300 block">Hoặc nhập email Google khác:</label>
-                  <input
-                    type="email"
-                    value={googleEmail}
-                    onChange={(e) => setGoogleEmail(e.target.value)}
-                    placeholder="example@gmail.com"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-amber-400 focus:outline-none"
-                  />
+                <div className="space-y-1.5">
+                  <label className="text-xs font-mono font-bold text-slate-200 block">
+                    Tên hiển thị chỉ huy chiến trường:
+                  </label>
                   <input
                     type="text"
                     value={googleName}
                     onChange={(e) => setGoogleName(e.target.value)}
-                    placeholder="Tên đại diện Google"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:border-amber-400 focus:outline-none"
+                    placeholder="Chỉ Huy Xe Tăng"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-600 text-white font-mono text-xs focus:border-amber-400 focus:outline-none transition-colors"
                   />
                 </div>
               </div>

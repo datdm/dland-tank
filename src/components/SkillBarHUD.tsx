@@ -231,7 +231,7 @@ export const SkillBarHUD: React.FC<SkillBarHUDProps> = ({ myTank, onUseSkill, on
                       sounds.playPowerUp();
                     }
                   }}
-                  className="absolute -top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-slate-950 font-black text-[10px] shadow-[0_0_14px_rgba(250,204,21,0.95)] ring-2 ring-yellow-100 animate-bounce cursor-pointer hover:scale-110 active:scale-95 transition-transform"
+                  className="absolute -top-2.5 -right-2 z-30 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 text-slate-950 font-black text-[9px] sm:text-[10px] shadow-[0_0_12px_rgba(250,204,21,0.9)] ring-2 ring-yellow-200 animate-pulse cursor-pointer hover:scale-110 active:scale-95 transition-transform"
                   title={`Cộng chiêu: Nâng cấp ${sk.vietnameseName} lên Lv.${skillLvl + 1} (Phím [${idx + 1}])`}
                 >
                   <Plus className="w-3.5 h-3.5 stroke-[3.5]" />

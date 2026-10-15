@@ -1,11 +1,16 @@
-import React from 'react';
-import { RotateCcw, Skull, Eye } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { RotateCcw, Skull, Eye, Check, ShieldAlert } from 'lucide-react';
+import { BulletModifier, AMMO_TYPES, AMMO_CONFIGS } from '../types/game';
+import { sounds } from '../utils/audio';
+import { haptics } from '../utils/haptics';
 
 interface RespawnOverlayProps {
   countdown: number;
-  onRespawn: () => void;
+  onRespawn: (chosenAmmo: BulletModifier) => void;
   kills: number;
   score: number;
+  currentAmmo?: BulletModifier;
+  hasOtherAliveTanks?: boolean;
   onSwitchToSpectator?: () => void;
 }
 
@@ -14,13 +19,22 @@ export const RespawnOverlay: React.FC<RespawnOverlayProps> = ({
   onRespawn,
   kills,
   score,
+  currentAmmo = 'STANDARD',
+  hasOtherAliveTanks = true,
   onSwitchToSpectator,
 }) => {
-  const [isShortLandscape, setIsShortLandscape] = React.useState(
+  const [selectedAmmo, setSelectedAmmo] = useState<BulletModifier>(currentAmmo);
+  const [isShortLandscape, setIsShortLandscape] = useState(
     () => typeof window !== 'undefined' && window.innerHeight <= 620 && window.innerWidth > window.innerHeight
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (currentAmmo) {
+      setSelectedAmmo(currentAmmo);
+    }
+  }, [currentAmmo]);
+
+  useEffect(() => {
     const handleResize = () => {
       setIsShortLandscape(window.innerHeight <= 620 && window.innerWidth > window.innerHeight);
     };
@@ -32,64 +46,177 @@ export const RespawnOverlay: React.FC<RespawnOverlayProps> = ({
     };
   }, []);
 
+  const handleSelectAmmo = (ammo: BulletModifier) => {
+    setSelectedAmmo(ammo);
+    sounds.playPowerUp();
+    haptics.light();
+  };
+
+  const handleConfirmRespawn = () => {
+    sounds.playShoot();
+    haptics.medium();
+    onRespawn(selectedAmmo);
+  };
+
+  const activeCfg = AMMO_CONFIGS[selectedAmmo] || AMMO_CONFIGS.STANDARD;
+
   return (
-    <div className="fixed inset-0 z-40 bg-red-950/40 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-300 pointer-events-auto select-none overflow-y-auto">
-      <div className={`bg-slate-900/95 border border-rose-500/50 rounded-2xl md:rounded-3xl ${
-        isShortLandscape ? 'p-3 max-w-xs space-y-1.5 max-h-[82vh]' : 'p-4 sm:p-6 md:p-8 max-w-sm md:max-w-md space-y-3 max-h-[85vh]'
-      } w-full text-center shadow-2xl shadow-rose-950/50 my-auto overflow-y-auto custom-scrollbar`}>
-        <div className={`${
-          isShortLandscape ? 'w-8 h-8' : 'w-10 h-10 sm:w-12 md:w-16 sm:h-12 md:h-16 mb-2 sm:mb-3'
-        } mx-auto rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center`}>
-          <Skull className={`${isShortLandscape ? 'w-4 h-4' : 'w-5 h-5 sm:w-6 md:w-8 sm:h-6 md:h-8'} text-rose-500`} />
-        </div>
-
-        <div>
-          <h2 className={`${isShortLandscape ? 'text-sm' : 'text-base sm:text-2xl md:text-3xl'} font-black text-white tracking-tight`}>
-            XE TĂNG ĐÃ BỊ PHÁ HỦY
-          </h2>
-          <p className={`${isShortLandscape ? 'text-[9.5px]' : 'text-[11px] sm:text-xs md:text-sm'} text-slate-400 mt-0.5`}>
-            Đang chuẩn bị xe tăng mới để tái xuất chiến trường...
-          </p>
-        </div>
-
-        <div className={`flex justify-center gap-4 sm:gap-6 md:gap-8 ${
-          isShortLandscape ? 'my-1.5 py-1 text-xs' : 'my-2.5 sm:my-3.5 md:my-5 py-2 sm:py-2.5 md:py-3.5'
-        } bg-slate-950/60 rounded-xl md:rounded-2xl border border-slate-800`}>
-          <div>
-            <div className={`${isShortLandscape ? 'text-[8.5px]' : 'text-[10px] sm:text-xs md:text-sm'} uppercase tracking-wider text-slate-500`}>Hạ Gục</div>
-            <div className={`${isShortLandscape ? 'text-sm' : 'text-base sm:text-lg md:text-2xl'} font-mono font-bold text-emerald-400 tabular-nums`}>{kills}</div>
+    <div className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200 pointer-events-auto select-none overflow-y-auto">
+      <div
+        className={`bg-slate-900/95 border-2 border-rose-500/60 rounded-2xl md:rounded-3xl ${
+          isShortLandscape
+            ? 'p-2.5 max-w-lg space-y-1.5 max-h-[96dvh]'
+            : 'p-4 sm:p-5 max-w-xl space-y-2.5 sm:space-y-3 max-h-[92dvh]'
+        } w-full text-center shadow-2xl shadow-rose-950/80 my-auto overflow-y-auto custom-scrollbar flex flex-col`}
+      >
+        {/* Header: Skull, Notice & Stats */}
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+          <div className="flex items-center gap-2.5 text-left">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0">
+              <Skull className="w-4 h-4 sm:w-5 sm:h-5 text-rose-500" />
+            </div>
+            <div>
+              <h2 className="text-xs sm:text-sm font-black text-white font-mono tracking-wide uppercase">
+                XE TĂNG BỊ HẠ GỤC
+              </h2>
+              <p className="text-[10px] text-slate-400">
+                Hồi sinh sau: <strong className="text-amber-400 font-bold">{Math.max(1, Math.ceil(countdown))}s</strong>
+              </p>
+            </div>
           </div>
-          <div className="w-px bg-slate-800" />
-          <div>
-            <div className={`${isShortLandscape ? 'text-[8.5px]' : 'text-[10px] sm:text-xs md:text-sm'} uppercase tracking-wider text-slate-500`}>Tổng Điểm</div>
-            <div className={`${isShortLandscape ? 'text-sm' : 'text-base sm:text-lg md:text-2xl'} font-mono font-bold text-white tabular-nums`}>{score}</div>
+
+          {/* Quick Stats */}
+          <div className="flex items-center gap-3 bg-slate-950/80 px-2.5 py-1 rounded-xl border border-slate-800 font-mono text-[10px] sm:text-xs">
+            <div>
+              <span className="text-slate-500 mr-1">Hạ gục:</span>
+              <strong className="text-emerald-400">{kills}</strong>
+            </div>
+            <div className="w-px h-3 bg-slate-800" />
+            <div>
+              <span className="text-slate-500 mr-1">Điểm:</span>
+              <strong className="text-amber-400">{score}</strong>
+            </div>
           </div>
         </div>
 
-        <div className={`${isShortLandscape ? 'text-[10px] my-1' : 'mb-2.5 sm:mb-3.5 md:mb-5 text-xs sm:text-sm md:text-base'} font-mono text-amber-400`}>
-          Hồi sinh sau: <strong className={`${isShortLandscape ? 'text-xs' : 'text-base sm:text-lg md:text-xl'} font-bold`}>{Math.max(1, Math.ceil(countdown))}s</strong>
+        {/* Section: CHỌN 1 LOẠI ĐẠN DUY NHẤT CHO HIỆP ĐẤU TIẾP THEO */}
+        <div className="space-y-1.5 text-left">
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] sm:text-xs font-mono font-bold text-amber-300 flex items-center gap-1.5">
+              <span>🎯</span>
+              <span>CHỌN 1 LOẠI ĐẠN CHO LƯỢT ĐẤU NÀY:</span>
+            </div>
+            <span className="text-[9.5px] font-mono text-slate-400">
+              (Trong trận chỉ dùng 1 đạn đã chọn)
+            </span>
+          </div>
+
+          {/* Bullet Grid (8 bullet types) */}
+          <div className={`grid ${isShortLandscape ? 'grid-cols-4 gap-1' : 'grid-cols-2 sm:grid-cols-4 gap-1.5'}`}>
+            {AMMO_TYPES.map((type) => {
+              const cfg = AMMO_CONFIGS[type];
+              const isSelected = selectedAmmo === type;
+
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => handleSelectAmmo(type)}
+                  className={`relative p-1.5 sm:p-2 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between active:scale-95 ${
+                    isSelected
+                      ? 'bg-slate-800/95 border-amber-400 ring-2 ring-amber-400/50 shadow-lg shadow-amber-500/10'
+                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60'
+                  }`}
+                  style={{
+                    boxShadow: isSelected ? `0 0 14px ${cfg.color}33` : undefined,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-base sm:text-lg shrink-0">{cfg.icon}</span>
+                    {isSelected && (
+                      <span className="w-4 h-4 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center text-[9px] font-black">
+                        <Check className="w-2.5 h-2.5 stroke-[3]" />
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-1 min-w-0">
+                    <div className="font-mono font-bold text-[10.5px] sm:text-xs text-white truncate">
+                      {cfg.vietnameseName}
+                    </div>
+                    <div
+                      className="text-[8px] font-mono font-bold uppercase truncate"
+                      style={{ color: cfg.color }}
+                    >
+                      {cfg.tag}
+                    </div>
+                    {!isShortLandscape && (
+                      <div className="text-[8.5px] text-slate-400 line-clamp-1 mt-0.5 leading-tight">
+                        {cfg.tacticalVi || cfg.description}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-1 pt-1 border-t border-slate-800/80 flex items-center justify-between text-[8px] font-mono text-slate-400">
+                    <span>Băng: <strong className="text-slate-200">{cfg.maxAmmo}v</strong></span>
+                    <span>Hồi: <strong className="text-slate-200">{cfg.regenTimeSec}s</strong></span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className={`${isShortLandscape ? 'space-y-1' : 'space-y-1.5 sm:space-y-2 md:space-y-3'}`}>
+        {/* Selected Ammo Highlight Banner */}
+        <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-2 text-left flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xl shrink-0">{activeCfg.icon}</span>
+            <div className="min-w-0">
+              <div className="text-xs font-mono font-bold text-white flex items-center gap-1.5 truncate">
+                <span>Đạn đã chọn:</span>
+                <span style={{ color: activeCfg.color }}>{activeCfg.vietnameseName}</span>
+                <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 font-normal">
+                  {activeCfg.maxAmmo} Viên / {activeCfg.regenTimeSec}s hồi
+                </span>
+              </div>
+              <div className="text-[9.5px] text-slate-400 truncate">
+                {activeCfg.tacticalVi || activeCfg.description}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons: Hồi sinh & Xem trận */}
+        <div className="pt-1 flex flex-col sm:flex-row items-center gap-2">
           <button
-            onClick={onRespawn}
-            className={`w-full flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold ${
-              isShortLandscape ? 'py-1.5 text-[10.5px] rounded-lg' : 'py-2 sm:py-2.5 md:py-3.5 px-3 sm:px-4 rounded-xl md:rounded-2xl text-xs sm:text-sm md:text-base'
-            } shadow-lg transition-transform active:scale-95 cursor-pointer uppercase tracking-wider`}
+            type="button"
+            onClick={handleConfirmRespawn}
+            className="flex-1 w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-slate-950 font-black p-2.5 rounded-xl text-xs sm:text-sm uppercase tracking-wider font-mono shadow-lg shadow-emerald-500/20 active:scale-98 cursor-pointer transition-all"
           >
-            <RotateCcw className={isShortLandscape ? 'w-3 h-3' : 'w-4 h-4 md:w-5 md:h-5'} />
-            Hồi Sinh Ngay
+            <RotateCcw className="w-4 h-4 text-slate-950 stroke-[2.5]" />
+            <span>HỒI SINH VỚI {activeCfg.vietnameseName.toUpperCase()}</span>
           </button>
 
           {onSwitchToSpectator && (
             <button
-              onClick={onSwitchToSpectator}
-              className={`w-full flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white font-semibold ${
-                isShortLandscape ? 'py-1 text-[9.5px] rounded-lg' : 'py-1.5 sm:py-2 md:py-3 px-3 sm:px-4 rounded-xl md:rounded-2xl text-[10px] sm:text-xs md:text-sm'
-              } border border-sky-500/30 transition-colors cursor-pointer uppercase tracking-wider`}
+              type="button"
+              disabled={!hasOtherAliveTanks}
+              onClick={() => {
+                if (!hasOtherAliveTanks) {
+                  sounds.playRadioBeep();
+                  return;
+                }
+                onSwitchToSpectator();
+              }}
+              className={`w-full sm:w-auto px-4 py-2.5 rounded-xl font-mono text-xs font-bold flex items-center justify-center gap-1.5 border transition-all ${
+                hasOtherAliveTanks
+                  ? 'bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white border-sky-500/40 cursor-pointer active:scale-95'
+                  : 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed opacity-60'
+              }`}
+              title={hasOtherAliveTanks ? 'Chuyển sang quan sát trận đấu' : 'Không có người chơi nào để xem'}
             >
-              <Eye className={isShortLandscape ? 'w-3 h-3 text-sky-400' : 'w-3.5 h-3.5 md:w-4 md:h-4 text-sky-400'} />
-              Xem Trận (Khán Giả)
+              <Eye className="w-3.5 h-3.5" />
+              <span>{hasOtherAliveTanks ? 'Xem Trận' : 'Hết Người Để Xem'}</span>
             </button>
           )}
         </div>

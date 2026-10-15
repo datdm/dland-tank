@@ -233,7 +233,10 @@ export const InGameSettingsModal: React.FC<InGameSettingsModalProps> = ({
         <div className="shrink-0 flex items-center gap-2 p-3 sm:p-4 border-t border-slate-800 bg-slate-900/95">
           <button
             type="button"
-            onClick={onExitGame}
+            onClick={() => {
+              onClose();
+              onExitGame();
+            }}
             className="flex-1 flex items-center justify-center gap-1.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-500/60 text-rose-300 p-2 sm:p-2.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer active:scale-95"
           >
             <LogOut className="w-3.5 h-3.5 text-rose-400" />

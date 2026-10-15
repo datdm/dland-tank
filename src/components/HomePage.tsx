@@ -23,6 +23,8 @@ import {
   RankTier,
   getRankFromRp,
   CustomRoomSummary,
+  OnlinePlayerInfo,
+  FriendUser,
 } from '../types/game';
 import { sounds } from '../utils/audio';
 import { TankVisual } from './TankVisual';
@@ -30,7 +32,7 @@ import { DecalBadge } from './DecalBadge';
 import { HelpModal } from './HelpModal';
 import { GarageModal } from './GarageModal';
 import { FriendsModal } from './FriendsModal';
-import { BattleSelectModal } from './BattleSelectModal';
+import { BattleSelectModal, FourGameMode } from './BattleSelectModal';
 import { CustomRoomModal } from './CustomRoomModal';
 import { WeatherBackgroundCanvas } from './WeatherBackgroundCanvas';
 import { ProfilePage } from './ProfilePage';
@@ -127,6 +129,23 @@ interface HomePageProps {
   onOpenAccountModal?: () => void;
   onUserChange?: (user: UserAccount) => void;
   initialTab?: 'home' | 'profile' | 'modes' | 'arsenal' | 'garage' | 'medals' | 'settings';
+  onlinePlayers?: OnlinePlayerInfo[];
+  pendingFriendRequests?: Array<{
+    id: string;
+    name: string;
+    friendCode: string;
+    rankRp: number;
+    tankClass: TankClass;
+    color?: string;
+    rankTier?: RankTier;
+  }>;
+  onSendFriendRequest?: (friendCode: string, playerId?: string) => void;
+  onAcceptFriendRequest?: (req: any) => void;
+  onDeclineFriendRequest?: (reqId: string) => void;
+  onInviteFriend?: (friend: any, inviteType: 'CASUAL' | 'RANKED') => void;
+  myFriendCode?: string;
+  activeRooms?: CustomRoomSummary[];
+  onSpectateRoom?: (roomId: string, mode?: GameMode) => void;
 }
 
 const COLOR_PRESETS = [
@@ -148,18 +167,18 @@ const BOT_OPTIONS = [
 ];
 
 const RANDOM_NAMES = [
-  'Chiến Thần T90',
-  'Hắc Báo Sấm Sét',
-  'Bão Lửa Sa Mạc',
-  'Pháo Kích Tầm Xa',
-  'Thiết Giáp Thép',
-  'Đại Bàng Biển Đông',
-  'Sát Thủ Vô Ảnh',
-  'Quang Trung Đại Phá',
-  'Cương Lĩnh Tác Chiến',
-  'Thần Sấm 72',
-  'Phục Thù Chiến Hạm',
-  'Mãnh Hổ Trường Sơn',
+  'MinhDat_VN',
+  'BáoĐen_Pro99',
+  'HoangLong_Tank',
+  'SátThủ_SấmSét',
+  'BaoKhang_Pro',
+  'ChiDung_Sniper',
+  'TuanKiet_No1',
+  'VietAnh_T90',
+  'Trần_Hoàng_Tank',
+  'QuangHuy_Chief',
+  'ThanhTung_Pro',
+  'ThầnSấm_72',
 ];
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -168,6 +187,8 @@ export const HomePage: React.FC<HomePageProps> = ({
   isSocketConnected,
   publicPlayers = [],
   customRooms = [],
+  activeRooms = [],
+  onSpectateRoom,
   initialMode = 'PUBLIC',
   initialRoomId = 'public',
   currentWeather = 'RAIN',
@@ -185,6 +206,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   onOpenAccountModal,
   onUserChange,
   initialTab,
+  onlinePlayers = [],
+  pendingFriendRequests = [],
+  onSendFriendRequest,
+  onAcceptFriendRequest,
+  onDeclineFriendRequest,
+  onInviteFriend,
+  myFriendCode,
 }) => {
   // Navigation Tabs: 'home' | 'profile' | 'modes' | 'arsenal' | 'garage' | 'medals' | 'settings'
   const [activeTab, setActiveTab] = useState<'home' | 'profile' | 'modes' | 'arsenal' | 'garage' | 'medals' | 'settings'>(
@@ -335,6 +363,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [isBattleModalOpen, setIsBattleModalOpen] = useState(false);
+  const [battleModalInitialMode, setBattleModalInitialMode] = useState<FourGameMode | undefined>(undefined);
 
   // Mobile Notice Dialog
   const [showMobileNotice, setShowMobileNotice] = useState(false);
@@ -465,6 +494,33 @@ export const HomePage: React.FC<HomePageProps> = ({
   };
 
   const handleStartBattle = (asSpectator: boolean = false) => {
+    // User Requirement: "Khi xem trận không có ai thì không vào xem chứ"
+    if (asSpectator) {
+      const isPublic = !roomId || roomId === 'public';
+      const hasPublicPlayers = onlineCount > 0 || (publicPlayers && publicPlayers.length > 0);
+      if (isPublic && !hasPublicPlayers && botCount === 0) {
+        sounds.playRadioBeep();
+        setCosmeticsToast({
+          show: true,
+          text: '⚠️ Trận đấu hiện chưa có người chơi nào để vào xem!',
+        });
+        setTimeout(() => setCosmeticsToast(null), 3500);
+        return;
+      }
+      if (!isPublic) {
+        const found = activeRooms?.find((r) => r.id === roomId) || customRooms?.find((r) => r.id === roomId);
+        if (found && found.playerCount === 0 && (!found.botCount || found.botCount === 0)) {
+          sounds.playRadioBeep();
+          setCosmeticsToast({
+            show: true,
+            text: '⚠️ Phòng này hiện chưa có ai tham chiến để xem!',
+          });
+          setTimeout(() => setCosmeticsToast(null), 3500);
+          return;
+        }
+      }
+    }
+
     const finalName = name.trim() || 'Chỉ Huy Xe Tăng';
     sounds.playShoot(tankClass === 'JUGGERNAUT');
     sounds.startBgm();
@@ -1093,13 +1149,15 @@ export const HomePage: React.FC<HomePageProps> = ({
               {/* Bottom Center: Mode Selection Widget (Full width flex on mobile portrait) */}
               <div
                 onClick={() => {
+                  setBattleModalInitialMode(undefined);
                   setActiveTab('modes');
+                  setIsBattleModalOpen(true);
                   sounds.playRadioBeep();
                 }}
                 className={`flex items-center justify-between gap-1.5 sm:gap-2.5 lg:gap-3 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-700/80 hover:border-amber-500/80 rounded-xl lg:rounded-2xl cursor-pointer transition-all shadow-md px-2 lg:px-3.5 py-1 lg:py-1.5 flex-1 min-w-0 md:max-w-[38%] group active:scale-98 ${
                   isShortLandscape ? 'h-9' : 'h-10 sm:h-11 lg:h-14'
                 }`}
-                title="Nhấn để chọn chế độ chiến đấu & bản đồ"
+                title="Nhấn để vào màn hình chọn chế độ chiến đấu"
               >
                 <div className="flex items-center gap-1.5 lg:gap-2.5 min-w-0">
                   <div className={`w-6 h-6 lg:w-9 lg:h-9 rounded-lg lg:rounded-xl flex items-center justify-center shrink-0 ${
@@ -1175,35 +1233,39 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </div>
               </div>
 
-              {/* Bottom Right: THE GIANT ICONIC LIÊN QUÂN "ĐẤU" BUTTON */}
+              {/* Bottom Right: TẠO PHÒNG & GIANT "ĐẤU" BUTTON */}
               <div className="flex items-center gap-1 sm:gap-2 lg:gap-3 shrink-0">
-                {/* Custom Party / Room Button (Hidden on mobile portrait) */}
+                {/* Custom Party / Room Button - Mobile Optimized & takes straight to Mode Selection Screen */}
                 <button
                   type="button"
                   onClick={() => {
-                    setIsCustomRoomModalOpen(true);
                     sounds.playRadioBeep();
+                    setBattleModalInitialMode('CUSTOM');
+                    setActiveTab('modes');
+                    setIsBattleModalOpen(true);
                   }}
-                  className={`hidden sm:flex rounded-xl lg:rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-sky-300 hover:text-white font-mono font-bold transition-all cursor-pointer flex-col items-center justify-center shadow-md active:scale-95 ${
-                    isShortLandscape ? 'px-1.5 py-0.5 h-9' : 'px-2.5 py-1 lg:px-3.5 lg:py-1.5 h-10 sm:h-11 lg:h-14'
+                  className={`flex rounded-xl lg:rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-sky-400 text-sky-300 hover:text-white font-mono font-bold transition-all cursor-pointer flex-col sm:flex-row items-center justify-center shadow-md active:scale-95 px-2 sm:px-3 lg:px-3.5 py-1 lg:py-1.5 gap-0.5 sm:gap-1.5 shrink-0 ${
+                    isShortLandscape ? 'h-9' : 'h-10 sm:h-11 lg:h-14'
                   }`}
-                  title="Tạo phòng đấu bạn bè hoặc tham gia phòng"
+                  title="Tạo phòng hoặc vào màn hình đấu chọn chế độ"
                 >
-                  <UserPlus className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5 lg:w-4 lg:h-4'} text-sky-400`} />
-                  <span className="text-[6.5px] sm:text-[7.5px] lg:text-[10px] mt-0.2">Tạo Phòng</span>
+                  <UserPlus className={`${isShortLandscape ? 'w-3 h-3' : 'w-3.5 h-3.5 lg:w-4 lg:h-4'} text-sky-400 shrink-0`} />
+                  <span className="text-[7.5px] sm:text-[9px] lg:text-xs whitespace-nowrap leading-tight">Tạo Phòng</span>
                 </button>
 
                 {/* THE GIANT LIÊN QUÂN "ĐẤU" (PLAY / BATTLE) BUTTON */}
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab('modes');
                     sounds.playRadioBeep();
+                    setBattleModalInitialMode(undefined);
+                    setActiveTab('modes');
+                    setIsBattleModalOpen(true);
                   }}
                   className={`relative group overflow-hidden rounded-xl lg:rounded-2xl font-mono font-black tracking-wider uppercase transition-all cursor-pointer active:scale-95 shadow-xl shadow-amber-500/25 border-2 border-amber-300 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-3 bg-gradient-to-r from-amber-500 via-yellow-400 to-orange-500 hover:from-amber-400 hover:via-yellow-300 hover:to-orange-400 text-slate-950 ${
-                    isShortLandscape ? 'px-3 py-1 h-9 min-w-[90px]' : 'px-4 sm:px-6 lg:px-8 py-1.5 lg:py-2 h-10 sm:h-11 lg:h-14 min-w-[110px] sm:min-w-[130px] lg:min-w-[170px]'
+                    isShortLandscape ? 'px-2.5 py-1 h-9 min-w-[76px]' : 'px-3 sm:px-6 lg:px-8 py-1.5 lg:py-2 h-10 sm:h-11 lg:h-14 min-w-[82px] xs:min-w-[96px] sm:min-w-[130px] lg:min-w-[170px]'
                   }`}
-                  title="Chạm để bắt đầu tìm trận / Vào chiến trường"
+                  title="Chạm để vào màn hình đấu chọn chế độ"
                 >
                   {/* Glowing energy flare */}
                   <div className="absolute inset-0 bg-gradient-to-r from-white/30 via-transparent to-white/30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
@@ -1213,7 +1275,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                     <span className={`${isShortLandscape ? 'text-[11px]' : 'text-xs sm:text-sm lg:text-lg'} font-black tracking-widest`}>
                       ĐẤU
                     </span>
-                    <span className="text-[6px] sm:text-[7px] lg:text-[9px] text-slate-900/80 font-bold tracking-tight">
+                    <span className="text-[6px] sm:text-[7px] lg:text-[9px] text-slate-900/80 font-bold tracking-tight hidden xs:inline">
                       VÀO TRẬN
                     </span>
                   </div>
@@ -2204,8 +2266,11 @@ export const HomePage: React.FC<HomePageProps> = ({
       <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
 
       <GarageModal
-        isOpen={isGarageModalOpen}
-        onClose={() => setIsGarageModalOpen(false)}
+        isOpen={isGarageModalOpen || activeTab === 'garage'}
+        onClose={() => {
+          setIsGarageModalOpen(false);
+          if (activeTab === 'garage') setActiveTab('home');
+        }}
         tankClass={tankClass}
         currentSkin={skinId}
         currentTrail={bulletTrail}
@@ -2259,7 +2324,14 @@ export const HomePage: React.FC<HomePageProps> = ({
         myPlayerColor={color}
         myTankClass={tankClass}
         myRankRp={rankRp}
+        myFriendCode={myFriendCode}
+        onlinePlayers={onlinePlayers}
+        pendingRequests={pendingFriendRequests}
         onJoinFriendRoom={handleJoinFriendRoom}
+        onSendFriendRequest={onSendFriendRequest}
+        onAcceptFriendRequest={onAcceptFriendRequest}
+        onDeclineFriendRequest={onDeclineFriendRequest}
+        onInviteFriend={onInviteFriend}
       />
 
       {/* Battle Selection & Launch Screen (Màn chọn 4 chế độ như 1 màn hình ở ngoài Home) */}
@@ -2268,6 +2340,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         onClose={() => {
           setIsBattleModalOpen(false);
           setActiveTab('home');
+          setBattleModalInitialMode(undefined);
         }}
         name={name}
         setName={setName}
@@ -2288,6 +2361,8 @@ export const HomePage: React.FC<HomePageProps> = ({
         roomId={roomId}
         setRoomId={setRoomId}
         onOpenCustomRoomModal={() => setIsCustomRoomModalOpen(true)}
+        activeRooms={activeRooms}
+        initialFourMode={battleModalInitialMode}
       />
     </div>
   );

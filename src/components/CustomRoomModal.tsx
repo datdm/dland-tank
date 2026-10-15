@@ -26,6 +26,9 @@ import {
   Wind,
   PlusCircle,
   LogIn,
+  Eye,
+  Radio,
+  Sparkles,
 } from 'lucide-react';
 
 interface CustomRoomModalProps {
@@ -43,17 +46,11 @@ interface CustomRoomModalProps {
     initialWeather?: WeatherType;
     team?: Team;
   }) => void;
+  onSpectateRoom?: (roomId: string, mode?: GameMode) => void;
   customRooms?: CustomRoomSummary[];
   isShortLandscape: boolean;
+  initialTab?: 'CREATE' | 'JOIN';
 }
-
-const MAP_PRESETS = [
-  { id: 'ARENA', name: 'Đấu Trường Pháo Đài', icon: '🏟️', desc: 'Bản đồ 3v3 tiêu chuẩn cân bằng' },
-  { id: 'DESERT', name: 'Sa Mạc Hoàng Kim', icon: '🏜️', desc: 'Bão cát mù mịt, giảm tầm quan sát' },
-  { id: 'SNOW', name: 'Vùng Băng Tuyết', icon: '❄️', desc: 'Mặt băng trơn trượt, lướt drift bánh xích' },
-  { id: 'JUNGLE', name: 'Rừng Rậm Nhiệt Đới', icon: '🌲', desc: 'Nhiều bụi cỏ nấp kích phục kích' },
-  { id: 'VOLCANO', name: 'Núi Lửa Dung Nham', icon: '🌋', desc: 'Bẫy magma gây sát thương đốt cháy' },
-];
 
 const WEATHER_OPTIONS: Array<{ type: WeatherType; name: string; icon: string; desc: string }> = [
   { type: 'RAIN', name: 'Mưa Giông', icon: '🌧️', desc: 'Tăng tốc độ di chuyển, bùn đất' },
@@ -69,10 +66,13 @@ export const CustomRoomModal: React.FC<CustomRoomModalProps> = ({
   color,
   tankClass,
   onJoinCustomRoom,
+  onSpectateRoom,
   customRooms = [],
   isShortLandscape,
+  initialTab = 'CREATE',
 }) => {
-  const [activeTab, setActiveTab] = useState<'CREATE' | 'JOIN'>('CREATE');
+  const [activeTab, setActiveTab] = useState<'CREATE' | 'JOIN'>(initialTab);
+  const [roomFilter, setRoomFilter] = useState<'ALL' | 'ACTIVE_WITH_PLAYERS'>('ALL');
 
   // Create Form State
   const [roomCode, setRoomCode] = useState(() => `PHONG-${Math.floor(1000 + Math.random() * 9000)}`);
@@ -130,6 +130,24 @@ export const CustomRoomModal: React.FC<CustomRoomModalProps> = ({
       botCount: 0,
       enableBoss: false,
     });
+    onClose();
+  };
+
+  const handleSpectateByCode = (targetCode: string, targetMode?: GameMode) => {
+    sounds.playRadioBeep();
+    const cleanId = targetCode.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!cleanId) return;
+
+    if (onSpectateRoom) {
+      onSpectateRoom(cleanId, targetMode || 'PUBLIC');
+    } else {
+      onJoinCustomRoom({
+        mode: targetMode || 'PUBLIC',
+        roomId: cleanId,
+        botCount: 0,
+        enableBoss: false,
+      });
+    }
     onClose();
   };
 
@@ -505,89 +523,194 @@ export const CustomRoomModal: React.FC<CustomRoomModalProps> = ({
               </button>
             </>
           ) : (
-            /* TAB 2: JOIN EXISTING ROOM */
-            <div className="space-y-4">
-              {/* Manual Input Code */}
+            /* TAB 2: JOIN EXISTING ROOM & SPECTATE MATCH */
+            <div className="space-y-3.5">
+              {/* Manual Input Code with BOTH Join Battle and Spectate Match */}
               <div className="bg-[#080e26] border border-[#1e2d61] rounded-xl p-3 space-y-2">
-                <label className="text-xs font-mono font-bold text-slate-300 block">
-                  NHẬP MÃ PHÒNG ĐỂ THAM GIA:
+                <label className="text-xs font-mono font-bold text-slate-300 block flex items-center justify-between">
+                  <span>NHẬP MÃ PHÒNG ĐỂ THAM GIA HOẶC XEM TRẬN:</span>
+                  <span className="text-slate-400 text-[10px] font-normal">Ví dụ: PHONG-8888</span>
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
                     value={joinInputCode}
                     onChange={(e) => setJoinInputCode(e.target.value.toUpperCase().slice(0, 24))}
-                    className="flex-1 bg-[#101738] border border-[#283873] rounded-lg px-3 py-2 text-sky-300 font-mono text-sm font-bold uppercase focus:outline-none focus:border-sky-400"
+                    className="flex-1 bg-[#101738] border border-[#283873] rounded-lg px-3 py-2 text-sky-300 font-mono text-sm font-bold uppercase focus:outline-none focus:border-sky-400 placeholder:text-slate-600"
                     placeholder="Nhập mã phòng (ví dụ: PHONG-8888)"
                   />
-                  <button
-                    type="button"
-                    onClick={() => handleJoinByCode(joinInputCode)}
-                    disabled={!joinInputCode.trim()}
-                    className="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-mono font-black text-xs uppercase cursor-pointer transition-all shadow-md shadow-sky-600/20 active:scale-95 flex items-center gap-1.5"
-                  >
-                    <LogIn className="w-4 h-4" />
-                    <span>Vào Phòng</span>
-                  </button>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleSpectateByCode(joinInputCode)}
+                      disabled={!joinInputCode.trim()}
+                      className="px-3.5 py-2 rounded-lg bg-cyan-700/80 hover:bg-cyan-600 disabled:opacity-40 text-cyan-100 font-mono font-black text-xs uppercase cursor-pointer transition-all shadow-md active:scale-95 flex items-center gap-1.5 border border-cyan-400/50"
+                      title="Xem trận trong phòng này (Khán giả)"
+                    >
+                      <Eye className="w-4 h-4 text-cyan-300" />
+                      <span>Xem Trận</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleJoinByCode(joinInputCode)}
+                      disabled={!joinInputCode.trim()}
+                      className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white font-mono font-black text-xs uppercase cursor-pointer transition-all shadow-md shadow-sky-600/20 active:scale-95 flex items-center gap-1.5"
+                      title="Điều khiển xe tăng vào tham chiến"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      <span>Vào Chơi</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Active Room List */}
-              <div className="space-y-2">
-                <h3 className="text-xs font-mono font-bold text-slate-300 flex items-center justify-between">
-                  <span>DANH SÁCH PHÒNG TÙY CHỌN ĐANG MỞ TRÊN SERVER:</span>
-                  <span className="text-amber-400 text-[10px]">{customRooms.length} Phòng Active</span>
-                </h3>
+              {/* Active Room List with Filter */}
+              {(() => {
+                const roomsWithPlayers = customRooms.filter((r) => r.playerCount > 0);
+                const displayedRooms = roomFilter === 'ACTIVE_WITH_PLAYERS'
+                  ? roomsWithPlayers
+                  : customRooms;
 
-                {customRooms.length === 0 ? (
-                  <div className="bg-[#090f2b] border border-[#1d2a57] rounded-xl p-6 text-center space-y-2">
-                    <Globe className="w-8 h-8 text-slate-500 mx-auto" />
-                    <p className="text-xs font-mono text-slate-400">
-                      Chưa có phòng tùy chọn nào đang mở.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('CREATE')}
-                      className="px-4 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold cursor-pointer transition-colors"
-                    >
-                      Tạo phòng đầu tiên ngay!
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto custom-scrollbar">
-                    {customRooms.map((r) => (
-                      <div
-                        key={r.id}
-                        className="bg-[#0a112e] border border-[#1f2d61] hover:border-sky-400/60 rounded-xl p-3 flex items-center justify-between transition-all"
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono font-black text-xs text-white">{r.name}</span>
-                            {r.hasBoss && (
-                              <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-mono font-bold">
-                                🐲 BOSS
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-                            <span>👥 {r.playerCount} Người</span>
-                            <span>🤖 {r.botCount} Bot</span>
-                            <span>🎮 {r.mode}</span>
-                          </div>
-                        </div>
+                return (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h3 className="text-xs font-mono font-bold text-slate-300 flex items-center gap-2">
+                        <span>DANH SÁCH PHÒNG CHIẾN ĐẤU TRÊN SERVER:</span>
+                        <span className="text-amber-400 text-[10px]">({customRooms.length} Phòng)</span>
+                      </h3>
 
+                      {/* Filter pills */}
+                      <div className="flex gap-1.5 text-[10px] font-mono font-bold">
                         <button
                           type="button"
-                          onClick={() => handleJoinByCode(r.id)}
-                          className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-mono font-bold cursor-pointer transition-all active:scale-95 shadow-md shadow-sky-600/20"
+                          onClick={() => setRoomFilter('ALL')}
+                          className={`px-2.5 py-0.5 rounded-lg border transition-all cursor-pointer ${
+                            roomFilter === 'ALL'
+                              ? 'bg-sky-600/40 border-sky-400 text-sky-200'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                          }`}
                         >
-                          Vào
+                          Tất Cả ({customRooms.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRoomFilter('ACTIVE_WITH_PLAYERS')}
+                          className={`px-2.5 py-0.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                            roomFilter === 'ACTIVE_WITH_PLAYERS'
+                              ? 'bg-emerald-600/40 border-emerald-400 text-emerald-200 shadow-sm'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${roomsWithPlayers.length > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                          <span>Có Người Chơi ({roomsWithPlayers.length})</span>
                         </button>
                       </div>
-                    ))}
+                    </div>
+
+                    {displayedRooms.length === 0 ? (
+                      <div className="bg-[#090f2b] border border-[#1d2a57] rounded-xl p-6 text-center space-y-2">
+                        <Globe className="w-8 h-8 text-slate-500 mx-auto" />
+                        <p className="text-xs font-mono text-slate-400">
+                          {roomFilter === 'ACTIVE_WITH_PLAYERS'
+                            ? 'Hiện chưa có phòng nào đang có người chơi thực. Bạn có thể chọn xem các phòng khác hoặc tạo phòng mới!'
+                            : 'Chưa có phòng tùy chọn nào đang mở.'}
+                        </p>
+                        <div className="flex justify-center gap-2 pt-1">
+                          {roomFilter === 'ACTIVE_WITH_PLAYERS' && (
+                            <button
+                              type="button"
+                              onClick={() => setRoomFilter('ALL')}
+                              className="px-3 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs font-mono font-bold cursor-pointer transition-colors"
+                            >
+                              Hiện tất cả phòng
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('CREATE')}
+                            className="px-4 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold cursor-pointer transition-colors"
+                          >
+                            Tạo phòng mới ngay!
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                        {displayedRooms.map((r) => {
+                          const hasRealPlayers = r.playerCount > 0;
+
+                          return (
+                            <div
+                              key={r.id}
+                              className={`rounded-xl p-2.5 sm:p-3 flex flex-col justify-between gap-2 transition-all border ${
+                                hasRealPlayers
+                                  ? 'bg-gradient-to-br from-[#0c193b] to-[#09152e] border-emerald-500/60 shadow-lg shadow-emerald-500/10 hover:border-emerald-400'
+                                  : 'bg-[#0a112e] border-[#1f2d61] hover:border-sky-400/60'
+                              }`}
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="font-mono font-black text-xs text-white truncate">{r.name}</span>
+                                  {hasRealPlayers && (
+                                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold flex items-center gap-1 shrink-0 animate-pulse">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                      <span>ĐANG ĐẤU</span>
+                                    </span>
+                                  )}
+                                  {r.hasBoss && (
+                                    <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-mono font-bold shrink-0">
+                                      🐲 BOSS
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 text-[10px] font-mono">
+                                  <span className={hasRealPlayers ? 'text-emerald-300 font-bold' : 'text-slate-400'}>
+                                    👥 {r.playerCount} Người{hasRealPlayers ? ' thực' : ''}
+                                  </span>
+                                  <span className="text-slate-400">🤖 {r.botCount} Bot</span>
+                                  <span className="text-sky-300">🎮 {r.mode}</span>
+                                </div>
+                              </div>
+
+                              {/* Action buttons: XEM TRẬN (Spectate) & VÀO CHƠI (Play) */}
+                              <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/80">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSpectateByCode(r.id, r.mode)}
+                                  className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer transition-all active:scale-95 flex items-center justify-center gap-1 border shadow-sm ${
+                                    hasRealPlayers
+                                      ? 'bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border-cyan-400/60 font-black'
+                                      : 'bg-slate-800/80 hover:bg-slate-700 text-cyan-300 border-cyan-500/30'
+                                  }`}
+                                  title="Xem trận đấu diễn ra trong phòng này (Chế độ Khán giả)"
+                                >
+                                  <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                                  <span>Xem Trận</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleJoinByCode(r.id)}
+                                  className={`flex-1 py-1.5 rounded-lg text-xs font-mono font-bold cursor-pointer transition-all active:scale-95 flex items-center justify-center gap-1 shadow-md ${
+                                    hasRealPlayers
+                                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+                                      : 'bg-sky-600 hover:bg-sky-500 text-white shadow-sky-600/20'
+                                  }`}
+                                  title="Điều khiển xe tăng vào tham chiến phòng này"
+                                >
+                                  <Swords className="w-3.5 h-3.5" />
+                                  <span>{hasRealPlayers ? 'Tham Chiến' : 'Vào Chơi'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </div>
           )}
         </div>

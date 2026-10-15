@@ -33,6 +33,10 @@ import {
   WeatherType,
   WEATHER_CYCLE,
   WEATHER_CONFIGS,
+  AMMO_TYPES,
+  AMMO_CONFIGS,
+  createDefaultAmmoInventory,
+  createDefaultAmmoRegenTimers,
 } from '../src/types/game';
 
 export const WORLD_WIDTH = 4200;
@@ -428,7 +432,8 @@ export class GameEngine {
     roofDecal?: RoofDecalId,
     matchType?: MatchType,
     rankTier?: RankTier,
-    rankRp?: number
+    rankRp?: number,
+    initialAmmo?: BulletModifier
   ): PlayerTank {
     const stats = TANK_CLASSES[tankClass] || TANK_CLASSES.STRIKER;
     let spawn = this.findSafeSpawnPosition();
@@ -464,6 +469,10 @@ export class GameEngine {
     const chosenTrail: BulletTrailId = bulletTrail || (isBot && Math.random() > 0.4 ? botTrails[Math.floor(Math.random() * botTrails.length)] : 'STANDARD');
     const chosenDecal: RoofDecalId = roofDecal || (isBot && Math.random() > 0.4 ? botDecals[Math.floor(Math.random() * botDecals.length)] : 'NONE');
 
+    const chosenAmmo: BulletModifier = isBot
+      ? AMMO_TYPES[Math.floor(Math.random() * AMMO_TYPES.length)]
+      : (initialAmmo && AMMO_TYPES.includes(initialAmmo) ? initialAmmo : 'STANDARD');
+
     const tank: PlayerTank = {
       id,
       name: name || (isBot ? `Bot [${tankClass}]` : 'Chiến Binh Mới'),
@@ -488,7 +497,10 @@ export class GameEngine {
       invulnerableUntil: Date.now() + 3000,
       lastFired: 0,
       ping: 15,
-      nextAmmoType: this.getRandomAmmoType(),
+      nextAmmoType: chosenAmmo,
+      selectedAmmo: chosenAmmo,
+      ammoInventory: createDefaultAmmoInventory(),
+      ammoRegenTimers: createDefaultAmmoRegenTimers(),
       slowUntil: 0,
       burnUntil: 0,
       skills: {
@@ -698,7 +710,19 @@ export class GameEngine {
     return false;
   }
 
-  public respawnPlayer(id: string) {
+  public switchAmmo(id: string, ammoType: BulletModifier): boolean {
+    const tank = this.tanks.get(id);
+    if (!tank) return false;
+    // User rule: During play, only 1 bullet type is selected. Ammo switch is allowed when dead/respawning.
+    if (tank.isDead && AMMO_TYPES.includes(ammoType)) {
+      tank.selectedAmmo = ammoType;
+      tank.nextAmmoType = ammoType;
+      return true;
+    }
+    return false;
+  }
+
+  public respawnPlayer(id: string, chosenAmmo?: BulletModifier) {
     const tank = this.tanks.get(id);
     if (!tank || !tank.isDead) return;
 
@@ -714,7 +738,23 @@ export class GameEngine {
     tank.respawnCountdown = 0;
     tank.invulnerableUntil = Date.now() + 3000;
     tank.activePowerUp = null;
-    tank.nextAmmoType = this.getRandomAmmoType();
+
+    if (tank.isBot) {
+      // Bot AI also randomly chooses only 1 bullet modifier per life
+      const botAmmo = AMMO_TYPES[Math.floor(Math.random() * AMMO_TYPES.length)];
+      tank.selectedAmmo = botAmmo;
+      tank.nextAmmoType = botAmmo;
+    } else {
+      // Player respawns with their selected bullet modifier
+      const playerAmmo = (chosenAmmo && AMMO_TYPES.includes(chosenAmmo))
+        ? chosenAmmo
+        : (tank.selectedAmmo || 'STANDARD');
+      tank.selectedAmmo = playerAmmo;
+      tank.nextAmmoType = playerAmmo;
+    }
+
+    tank.ammoInventory = createDefaultAmmoInventory();
+    tank.ammoRegenTimers = createDefaultAmmoRegenTimers();
     tank.skills = {
       boostUntil: 0,
       boostCooldownUntil: 0,
@@ -995,6 +1035,33 @@ export class GameEngine {
         tank.activePowerUp = null;
       }
 
+      // Ammo Inventory & Continuous Bullet Regeneration
+      if (!tank.ammoInventory) tank.ammoInventory = createDefaultAmmoInventory();
+      if (!tank.ammoRegenTimers) tank.ammoRegenTimers = createDefaultAmmoRegenTimers();
+      if (!tank.selectedAmmo) tank.selectedAmmo = 'STANDARD';
+
+      // Cooldown multiplier from RAPID_RELOAD perk (-20%) and Level (-2.5% per level)
+      const perkCdMult = tank.perks?.includes('RAPID_RELOAD') ? 0.8 : 1.0;
+      const levelCdMult = Math.max(0.75, 1 - ((tank.level || 1) - 1) * 0.025);
+      const regenCdMult = perkCdMult * levelCdMult;
+
+      for (const mod of AMMO_TYPES) {
+        const cfg = AMMO_CONFIGS[mod];
+        if (tank.ammoInventory[mod] < cfg.maxAmmo) {
+          const regenInterval = cfg.regenTimeSec * 1000 * regenCdMult;
+          tank.ammoRegenTimers[mod] = (tank.ammoRegenTimers[mod] || 0) + deltaTime * 1000;
+          while (tank.ammoRegenTimers[mod] >= regenInterval && tank.ammoInventory[mod] < cfg.maxAmmo) {
+            tank.ammoInventory[mod] += 1;
+            tank.ammoRegenTimers[mod] -= regenInterval;
+          }
+          if (tank.ammoInventory[mod] >= cfg.maxAmmo) {
+            tank.ammoRegenTimers[mod] = 0;
+          }
+        } else {
+          tank.ammoRegenTimers[mod] = 0;
+        }
+      }
+
       const input = this.tankInputs.get(id);
       if (!input) continue;
 
@@ -1224,8 +1291,11 @@ export class GameEngine {
       }
 
       if (input.isFiring && now - tank.lastFired >= cooldown) {
-        tank.lastFired = now;
-        this.fireBullet(tank);
+        const curSelected = tank.selectedAmmo || 'STANDARD';
+        if (tank.ammoInventory && (tank.ammoInventory[curSelected] || 0) > 0) {
+          tank.lastFired = now;
+          this.fireBullet(tank);
+        }
       }
 
       // Check power-up crate pickup
@@ -1257,7 +1327,11 @@ export class GameEngine {
       for (const obs of this.obstacles) {
         if (obs.type === 'BUSH' || obs.type === 'WATER') continue; // bullets pass over water & bushes
 
-        if (circleRectCollision(b.x, b.y, BULLET_RADIUS, obs.x, obs.y, obs.w, obs.h)) {
+        // Continuous sub-step check to prevent fast bullets (e.g. Plasma) from tunneling through thin walls
+        const hitCurrent = circleRectCollision(b.x, b.y, BULLET_RADIUS, obs.x, obs.y, obs.w, obs.h);
+        const hitMid = circleRectCollision(b.x - b.vx * 0.5, b.y - b.vy * 0.5, BULLET_RADIUS, obs.x, obs.y, obs.w, obs.h);
+
+        if (hitCurrent || hitMid) {
           // Ricochet Bouncing Bullet
           if (b.modifier === 'RICOCHET' && (b.bouncesLeft || 0) > 0) {
             b.bouncesLeft = (b.bouncesLeft || 1) - 1;
@@ -1290,13 +1364,7 @@ export class GameEngine {
             }
           }
 
-          // Piercing shell continues through brick with reduced range
-          if (b.modifier === 'PIERCING') {
-            b.rangeLeft -= 180;
-            if (b.rangeLeft > 0) continue;
-          }
-
-          // Explosive shell AoE blast on walls
+          // Explosive shell AoE blast on nearby walls
           if (b.modifier === 'EXPLOSIVE') {
             for (const otherObs of this.obstacles) {
               if (otherObs.type === 'BRICK' && otherObs.hp !== undefined && distance(b.x, b.y, otherObs.x + otherObs.w / 2, otherObs.y + otherObs.h / 2) < 80) {
@@ -1318,6 +1386,7 @@ export class GameEngine {
             }
           }
 
+          // User Requirement: Bullets do NOT penetrate obstacles (blocked & destroyed on impact)
           bulletDestroyed = true;
           break;
         }
@@ -1475,9 +1544,18 @@ export class GameEngine {
     const spawnY = tank.y + Math.sin(tank.turretAngle) * muzzleDist;
     const trail = tank.bulletTrail || 'STANDARD';
 
-    // Use currently loaded random ammo, then prepare the next random ammo
-    const modifier = tank.nextAmmoType || this.getRandomAmmoType();
-    tank.nextAmmoType = this.getRandomAmmoType();
+    const selected = tank.selectedAmmo || 'STANDARD';
+    if (!tank.ammoInventory) tank.ammoInventory = createDefaultAmmoInventory();
+
+    // Check fixed ammo count & prevent firing if 0
+    if (tank.ammoInventory[selected] <= 0) {
+      return;
+    }
+
+    // Deduct 1 bullet from fixed ammo inventory
+    tank.ammoInventory[selected] -= 1;
+    tank.nextAmmoType = selected;
+    const modifier = selected;
 
     if (modifier === 'TRIPLE' || tank.activePowerUp?.type === 'TRIPLE_SHOT') {
       const spreads = [-0.2, 0, 0.2];
@@ -2536,8 +2614,33 @@ export class GameEngine {
       }
 
       // -------------------------------------------------------------
-      // 4. AIMING & SHOOTING DISCIPLINE
+      // 4. AIMING & SHOOTING DISCIPLINE & TACTICAL AMMO SWITCHING
       // -------------------------------------------------------------
+      if (tank.ammoInventory) {
+        let bestAmmo: BulletModifier = tank.selectedAmmo || 'STANDARD';
+        if ((tank.ammoInventory[bestAmmo] || 0) <= 0) {
+          if (tank.ammoInventory.STANDARD > 0) {
+            bestAmmo = 'STANDARD';
+          } else {
+            const available = AMMO_TYPES.find((m) => (tank.ammoInventory![m] || 0) > 0);
+            if (available) bestAmmo = available;
+          }
+        } else {
+          if (targetBoss && (tank.ammoInventory.EXPLOSIVE || 0) > 0) {
+            bestAmmo = 'EXPLOSIVE';
+          } else if (distToTarget > 550 && (tank.ammoInventory.PLASMA || 0) > 0) {
+            bestAmmo = 'PLASMA';
+          } else if (distToTarget < 280 && (tank.ammoInventory.EXPLOSIVE || 0) > 0) {
+            bestAmmo = 'EXPLOSIVE';
+          } else if (distToTarget < 350 && (tank.ammoInventory.TRIPLE || 0) > 0) {
+            bestAmmo = 'TRIPLE';
+          }
+        }
+        if (tank.selectedAmmo !== bestAmmo) {
+          this.switchAmmo(id, bestAmmo);
+        }
+      }
+
       if (targetBoss && this.boss) {
         // Aim directly at Boss Leviathan
         const jitter = (Math.random() - 0.5) * 0.15;
@@ -2603,7 +2706,6 @@ export class GameEngine {
       tanks: Array.from(this.tanks.values()),
       bullets: this.bullets,
       powerUps: this.powerUps,
-      obstacles: this.obstacles,
       landmines: this.landmines,
       leaderboard: sortedLeaderboard,
       serverTime: Date.now(),

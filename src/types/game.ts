@@ -61,6 +61,174 @@ export type BulletModifier =
   | 'INCENDIARY'
   | 'RICOCHET'
   | 'PIERCING';
+
+export interface AmmoConfig {
+  type: BulletModifier;
+  name: string;
+  vietnameseName: string;
+  icon: string;
+  color: string;
+  maxAmmo: number;        // Số lượng đạn cố định trong băng
+  regenTimeSec: number;   // Thời gian hồi 1 viên đạn (giây)
+  tag: string;
+  description: string;
+  tacticalInfo: string;
+  tacticalVi: string;
+  hotkey: string;
+}
+
+export const AMMO_TYPES: BulletModifier[] = [
+  'STANDARD',
+  'EXPLOSIVE',
+  'TRIPLE',
+  'PLASMA',
+  'CRYO',
+  'INCENDIARY',
+  'RICOCHET',
+  'PIERCING',
+];
+
+export const AMMO_CONFIGS: Record<BulletModifier, AmmoConfig> = {
+  STANDARD: {
+    type: 'STANDARD',
+    name: 'Standard Kinetic',
+    vietnameseName: 'Đạn Tiêu Chuẩn',
+    icon: '⚡',
+    color: '#38bdf8',
+    maxAmmo: 15,
+    regenTimeSec: 0.8,
+    tag: 'ĐẠN CĂN BẢN',
+    description: 'Băng đạn 15 viên, nạp hồi cực nhanh 0.8s/viên. Hỏa lực ổn định.',
+    tacticalInfo: 'Standard: High fire rate, rapid reload, balanced kinetic damage',
+    tacticalVi: 'Tiêu chuẩn: Tốc độ bắn cao, nạp hồi cực nhanh, sát thương ổn định',
+    hotkey: '1',
+  },
+  EXPLOSIVE: {
+    type: 'EXPLOSIVE',
+    name: 'High Explosive',
+    vietnameseName: 'Đại Bác Nổ Diện Rộng',
+    icon: '💥',
+    color: '#ef4444',
+    maxAmmo: 5,
+    regenTimeSec: 2.8,
+    tag: 'SÁT THƯƠNG DIỆN RỘNG',
+    description: 'Sát thương x1.45, gây nổ lan phá hủy xe tăng và tường gạch lân cận.',
+    tacticalInfo: 'Explosive: High splash damage, low fire rate',
+    tacticalVi: 'Nổ diện rộng: Sát thương lan cực lớn, tốc độ bắn chậm, phá vỡ công sự',
+    hotkey: '2',
+  },
+  TRIPLE: {
+    type: 'TRIPLE',
+    name: 'Triple Spread',
+    vietnameseName: 'Pháo Chùm 3 Tia',
+    icon: '🔱',
+    color: '#fbbf24',
+    maxAmmo: 6,
+    regenTimeSec: 2.2,
+    tag: 'CÀN QUÉT GÓC RỘNG',
+    description: 'Bắn 3 viên pháo góc quạt cùng lúc, quét sạch khu vực hẹp.',
+    tacticalInfo: 'Triple: High spread burst, wide area coverage, lethal close-range',
+    tacticalVi: 'Pháo chùm: Bắn quạt 3 tia, dồn sát thương cực mạnh ở cự ly gần',
+    hotkey: '3',
+  },
+  PLASMA: {
+    type: 'PLASMA',
+    name: 'Hyper Plasma',
+    vietnameseName: 'Laze Plasma Siêu Tốc',
+    icon: '🔮',
+    color: '#00f0ff',
+    maxAmmo: 8,
+    regenTimeSec: 1.6,
+    tag: 'TỐC ĐỘ CAO & BẮN XA',
+    description: 'Đạn bay nhanh x1.8, tầm bắn x1.35, thích hợp bắn tỉa cự ly xa.',
+    tacticalInfo: 'Plasma: Hyper projectile velocity, extended sniper range',
+    tacticalVi: 'Plasma: Vận tốc bay siêu tốc, tầm bắn xa vượt trội, tỉa mục tiêu từ xa',
+    hotkey: '4',
+  },
+  CRYO: {
+    type: 'CRYO',
+    name: 'Cryo Freeze',
+    vietnameseName: 'Băng Giá Làm Chậm',
+    icon: '❄️',
+    color: '#7dd3fc',
+    maxAmmo: 6,
+    regenTimeSec: 2.2,
+    tag: 'KHỐNG CHẾ ĐỐI THỦ',
+    description: 'Làm chậm tốc độ đối phương -48% trong 2.5s khi trúng đạn.',
+    tacticalInfo: 'Cryo: Slows target movement',
+    tacticalVi: 'Băng giá: Giảm 48% tốc độ di chuyển của địch trong 2.5s, khóa chân đối thủ',
+    hotkey: '5',
+  },
+  INCENDIARY: {
+    type: 'INCENDIARY',
+    name: 'Incendiary Flame',
+    vietnameseName: 'Lửa Thiêu Đốt Liên Tục',
+    icon: '🔥',
+    color: '#f97316',
+    maxAmmo: 6,
+    regenTimeSec: 2.2,
+    tag: 'ĐỐT MÁU THEO GIÂY',
+    description: 'Thiêu đốt xe địch, rút máu liên tục trong 3s bất kể giáp.',
+    tacticalInfo: 'Incendiary: Burning damage over time, ignores heavy armor',
+    tacticalVi: 'Thiêu đốt: Đốt máu liên tục trong 3s, bào mòn xe tăng bọc thép',
+    hotkey: '6',
+  },
+  RICOCHET: {
+    type: 'RICOCHET',
+    name: 'Ricochet Kinetic',
+    vietnameseName: 'Đạn Nảy Bật Tường',
+    icon: '🪃',
+    color: '#c084fc',
+    maxAmmo: 7,
+    regenTimeSec: 1.8,
+    tag: 'NẢY 2 LẦN QUA VẬT CẢN',
+    description: 'Bật nảy 2 lần trên tường kim loại/gạch, phục kích trong góc khuất.',
+    tacticalInfo: 'Ricochet: Bounces twice off walls, bank shots around blind corners',
+    tacticalVi: 'Đạn nảy: Bật nảy 2 lần qua tường, bắn tỉa đối thủ ẩn nấp sau góc cua',
+    hotkey: '7',
+  },
+  PIERCING: {
+    type: 'PIERCING',
+    name: 'Armor Piercing',
+    vietnameseName: 'Xuyên Phá Giáp Bê Tông',
+    icon: '🎯',
+    color: '#10b981',
+    maxAmmo: 5,
+    regenTimeSec: 2.8,
+    tag: 'XUYÊN ĐỊCH (KHÔNG XUYÊN TƯỜNG)',
+    description: 'Đạn nặng xuyên giáp, bắn xuyên qua nhiều xe tăng trên một đường thẳng (bị chặn bởi tường/chướng ngại vật).',
+    tacticalInfo: 'Piercing: Penetrates multiple enemy tanks in line of fire (blocked by obstacles)',
+    tacticalVi: 'Xuyên phá: Bắn xuyên thấu nhiều xe địch cùng lúc (bị cản bởi chướng ngại vật/tường)',
+    hotkey: '8',
+  },
+};
+
+export function createDefaultAmmoInventory(): Record<BulletModifier, number> {
+  return {
+    STANDARD: AMMO_CONFIGS.STANDARD.maxAmmo,
+    EXPLOSIVE: AMMO_CONFIGS.EXPLOSIVE.maxAmmo,
+    TRIPLE: AMMO_CONFIGS.TRIPLE.maxAmmo,
+    PLASMA: AMMO_CONFIGS.PLASMA.maxAmmo,
+    CRYO: AMMO_CONFIGS.CRYO.maxAmmo,
+    INCENDIARY: AMMO_CONFIGS.INCENDIARY.maxAmmo,
+    RICOCHET: AMMO_CONFIGS.RICOCHET.maxAmmo,
+    PIERCING: AMMO_CONFIGS.PIERCING.maxAmmo,
+  };
+}
+
+export function createDefaultAmmoRegenTimers(): Record<BulletModifier, number> {
+  return {
+    STANDARD: 0,
+    EXPLOSIVE: 0,
+    TRIPLE: 0,
+    PLASMA: 0,
+    CRYO: 0,
+    INCENDIARY: 0,
+    RICOCHET: 0,
+    PIERCING: 0,
+  };
+}
+
 export type AimMode = 'MOVEMENT' | 'MOUSE';
 
 export type SkillType = 'BOOST' | 'SHIELD' | 'MINE' | 'BARRAGE';
@@ -559,6 +727,9 @@ export interface PlayerTank {
   lastFired: number;
   ping: number;
   nextAmmoType?: BulletModifier;
+  selectedAmmo?: BulletModifier;
+  ammoInventory?: Record<BulletModifier, number>;
+  ammoRegenTimers?: Record<BulletModifier, number>;
   slowUntil?: number;
   burnUntil?: number;
   skills?: TankSkillState;
@@ -711,7 +882,7 @@ export interface GameSnapshot {
   tanks: PlayerTank[];
   bullets: Bullet[];
   powerUps: PowerUpCrate[];
-  obstacles: Obstacle[];
+  obstacles?: Obstacle[];
   leaderboard: LeaderboardEntry[];
   serverTime: number;
   landmines?: Landmine[];
@@ -746,6 +917,7 @@ export interface CustomRoomSummary {
   hasBoss: boolean;
   hasAI: boolean;
   botCount: number;
+  matchType?: MatchType;
   botDifficulty?: BotDifficulty;
   weather?: WeatherType;
   hasPassword?: boolean;
@@ -786,6 +958,7 @@ export type ClientMessage =
       enableBoss?: boolean;
       bossHp?: number;
       initialWeather?: WeatherType;
+      initialAmmo?: BulletModifier;
     }
   | {
       type: 'INPUT';
@@ -796,10 +969,12 @@ export type ClientMessage =
       turretAngle: number;
       isFiring: boolean;
       skillTrigger?: SkillType;
+      selectedAmmo?: BulletModifier;
     }
+  | { type: 'SWITCH_AMMO'; ammoType: BulletModifier }
   | { type: 'USE_SKILL'; skill: SkillType }
   | { type: 'UPGRADE_SKILL'; skill: SkillType }
-  | { type: 'RESPAWN' }
+  | { type: 'RESPAWN'; ammoType?: BulletModifier }
   | {
       type: 'SET_SPECTATOR';
       isSpectator: boolean;
@@ -841,6 +1016,53 @@ export type ClientMessage =
       x: number;
       y: number;
       pingType?: 'ATTACK' | 'DEFEND' | 'GATHER';
+    }
+  | {
+      type: 'REGISTER_PROFILE';
+      friendCode: string;
+      name: string;
+      color: string;
+      tankClass: TankClass;
+      rankRp?: number;
+      rankTier?: RankTier;
+      currentMode?: GameMode;
+    }
+  | {
+      type: 'FRIEND_REQUEST';
+      targetFriendCode?: string;
+      targetPlayerId?: string;
+      sender: {
+        id: string;
+        friendCode: string;
+        name: string;
+        color: string;
+        tankClass: TankClass;
+        rankRp: number;
+        rankTier?: RankTier;
+      };
+    }
+  | {
+      type: 'FRIEND_ACCEPT';
+      targetPlayerId: string;
+      targetFriendCode?: string;
+      sender: {
+        id: string;
+        friendCode: string;
+        name: string;
+        color: string;
+        tankClass: TankClass;
+        rankRp: number;
+        rankTier?: RankTier;
+      };
+    }
+  | {
+      type: 'FRIEND_INVITE';
+      targetPlayerId?: string;
+      targetFriendCode?: string;
+      senderName: string;
+      matchType: MatchType;
+      roomId: string;
+      mode: GameMode;
     };
 
 export interface QueueMatchedPlayer {
@@ -862,6 +1084,20 @@ export interface CustomRoomSummary {
   hasBoss: boolean;
   mode: GameMode;
   weather?: WeatherType;
+}
+
+export interface OnlinePlayerInfo {
+  id: string;
+  friendCode: string;
+  name: string;
+  color: string;
+  tankClass: TankClass;
+  rankTier?: RankTier;
+  rankRp?: number;
+  status: 'ONLINE' | 'IN_BATTLE';
+  currentMode?: GameMode;
+  roomId?: string;
+  isMe?: boolean;
 }
 
 export type ServerMessage =
@@ -886,6 +1122,46 @@ export type ServerMessage =
       publicPlayers: PublicPlayerInfo[];
       activeRoomId?: string;
       customRooms?: CustomRoomSummary[];
+      activeRooms?: CustomRoomSummary[];
+      onlinePlayers?: OnlinePlayerInfo[];
+    }
+  | {
+      type: 'ONLINE_PLAYERS_UPDATE';
+      players: OnlinePlayerInfo[];
+    }
+  | {
+      type: 'FRIEND_REQUEST_RECEIVED';
+      from: {
+        id: string;
+        friendCode: string;
+        name: string;
+        color: string;
+        tankClass: TankClass;
+        rankRp: number;
+        rankTier?: RankTier;
+      };
+    }
+  | {
+      type: 'FRIEND_REQUEST_ACCEPTED';
+      from: {
+        id: string;
+        friendCode: string;
+        name: string;
+        color: string;
+        tankClass: TankClass;
+        rankRp: number;
+        rankTier?: RankTier;
+      };
+    }
+  | {
+      type: 'FRIEND_INVITE_RECEIVED';
+      from: {
+        senderId: string;
+        senderName: string;
+        matchType: MatchType;
+        roomId: string;
+        mode: GameMode;
+      };
     }
   | {
       type: 'QUEUE_STATUS';
@@ -1199,56 +1475,6 @@ export interface FriendUser {
   lastActive: string;
 }
 
-export const DEFAULT_SAMPLE_FRIENDS: FriendUser[] = [
-  {
-    id: 'f_1',
-    friendCode: 'DLAND-7701',
-    name: 'Đại Đội Trưởng Nam',
-    color: '#2563eb',
-    tankClass: 'JUGGERNAUT',
-    rankTier: 'DIAMOND',
-    rankRp: 1780,
-    status: 'ONLINE',
-    currentMode: 'PUBLIC',
-    roomId: 'public',
-    lastActive: 'Đang online',
-  },
-  {
-    id: 'f_2',
-    friendCode: 'DLAND-4299',
-    name: 'Xạ Thủ Hùng Ba',
-    color: '#dc2626',
-    tankClass: 'SCOUT',
-    rankTier: 'MASTER',
-    rankRp: 2150,
-    status: 'IN_BATTLE',
-    currentMode: 'BATTLE_ROYALE',
-    roomId: 'br',
-    lastActive: 'Trận Đấu Sinh Tồn Bo (GĐ 3)',
-  },
-  {
-    id: 'f_3',
-    friendCode: 'DLAND-1124',
-    name: 'Bách Phát Bách Trúng',
-    color: '#16a34a',
-    tankClass: 'STRIKER',
-    rankTier: 'PLATINUM',
-    rankRp: 1420,
-    status: 'IN_BATTLE',
-    currentMode: 'TEAM_DEATHMATCH',
-    roomId: 'tdm',
-    lastActive: 'Đấu Đội 5v5 (Phe Đỏ)',
-  },
-  {
-    id: 'f_4',
-    friendCode: 'DLAND-9005',
-    name: 'Hắc Thiết Giáp',
-    color: '#9333ea',
-    tankClass: 'JUGGERNAUT',
-    rankTier: 'GOLD',
-    rankRp: 980,
-    status: 'OFFLINE',
-    lastActive: '15 phút trước',
-  },
-];
+export const DEFAULT_SAMPLE_FRIENDS: FriendUser[] = [];
+
 

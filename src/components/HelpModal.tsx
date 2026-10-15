@@ -221,6 +221,32 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Chế độ đổi đạn & Hồi đạn */}
+              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-rose-500/40 space-y-2">
+                <h4 className="font-bold text-white text-sm text-rose-400 flex items-center gap-1.5">
+                  <Crosshair className="w-4 h-4 text-rose-400" />
+                  Chế Độ Đổi Đạn Pháo (Weapon Switch)
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="flex items-center justify-between p-2 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="text-slate-300">Chọn trực tiếp 8 loại đạn:</span>
+                    <kbd className="px-2 py-0.5 bg-slate-800 text-rose-300 rounded font-mono font-bold">Phím 1 - 8</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="text-slate-300">Loại đạn trước / kế tiếp:</span>
+                    <kbd className="px-2 py-0.5 bg-slate-800 text-amber-300 rounded font-mono font-bold">Phím Z / X</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="text-slate-300">Đổi xoay vòng loại đạn:</span>
+                    <kbd className="px-2 py-0.5 bg-slate-800 text-sky-300 rounded font-mono font-bold">Phím B</kbd>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-slate-900/80 rounded-lg border border-slate-800">
+                    <span className="text-slate-300">Cuộn đổi đạn nhanh:</span>
+                    <kbd className="px-2 py-0.5 bg-slate-800 text-emerald-300 rounded font-mono font-bold">Cuộn Chuột</kbd>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -462,65 +488,78 @@ export const HelpModal: React.FC<HelpModalProps> = ({
           {/* TAB 4: AMMO TYPES */}
           {activeTab === 'ammo' && (
             <div className="space-y-2">
-              <div className="p-2 bg-slate-950/90 border border-slate-800 rounded-xl text-[11px] text-slate-300">
-                💡 <strong>Cơ chế Đạn Ngẫu Nhiên</strong>: Mỗi phát bắn xe tăng của bạn sẽ nạp ngẫu nhiên 1 trong 8 loại đạn chiến thuật độc đáo sau:
+              <div className="p-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-[11px] text-slate-300 space-y-1">
+                <p>
+                  🎯 <strong>Hệ Thống Đạn Cố Định & Thời Gian Hồi Đạn</strong>: Mỗi loại đạn sở hữu số lượng cố định trong băng đạn và tốc độ nạp hồi riêng biệt.
+                </p>
+                <p className="text-sky-300 font-mono text-[10.5px]">
+                  ⚡ <strong>Chuyển Đổi Nhanh</strong>: Dùng phím <strong>[1] - [8]</strong>, phím <strong>Z / X / B</strong>, cuộn chuột hoặc bấm trực tiếp trên HUD để đổi đạn bất cứ lúc nào!
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-orange-500/30">
-                  <div className="font-bold text-orange-400 flex items-center gap-1.5">
-                    <span>💥 Đại Bác Nổ Lan (Explosive)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-sky-500/40">
+                  <div className="font-bold text-sky-400 flex items-center justify-between">
+                    <span>⚡ [1] Đạn Tiêu Chuẩn (Standard)</span>
+                    <span className="font-mono text-emerald-400">15 viên • Hồi 0.8s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Tạo vùng nổ bán kính 80px khi va chạm, gây sát thương lan ra xung quanh.</p>
+                  <p className="text-slate-400 mt-0.5">Băng đạn lớn 15 viên, nạp hồi cực nhanh 0.8s/viên. Hỏa lực ổn định, độ chính xác cao.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-purple-500/30">
-                  <div className="font-bold text-purple-400 flex items-center gap-1.5">
-                    <span>🔱 Chùm 3 Tia (Triple Spread)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-red-500/40">
+                  <div className="font-bold text-red-400 flex items-center justify-between">
+                    <span>💥 [2] Đại Bác Nổ Lan (Explosive)</span>
+                    <span className="font-mono text-amber-400">5 viên • Hồi 2.8s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Bắn 3 viên đạn tỏa quạt góc hẹp tăng khả năng trúng mục tiêu di động.</p>
+                  <p className="text-slate-400 mt-0.5">Sát thương x1.45, tạo vùng nổ bán kính rộng phá hủy xe tăng và tường gạch lân cận.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-cyan-500/30">
-                  <div className="font-bold text-cyan-400 flex items-center gap-1.5">
-                    <span>⚡ Laze Plasma (High Velocity)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-amber-500/40">
+                  <div className="font-bold text-amber-400 flex items-center justify-between">
+                    <span>🔱 [3] Chùm 3 Tia (Triple Spread)</span>
+                    <span className="font-mono text-amber-400">6 viên • Hồi 2.2s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Tia plasma siêu thanh bay nhanh gấp 1.7 lần, không thể né tránh ở cự ly gần.</p>
+                  <p className="text-slate-400 mt-0.5">Bắn 3 luồng pháo góc quạt cùng lúc, quét sạch khu vực hẹp và cản phá đối thủ di động.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-blue-500/30">
-                  <div className="font-bold text-blue-400 flex items-center gap-1.5">
-                    <span>❄️ Đạn Băng Làm Chậm (Cryo Frost)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-cyan-500/40">
+                  <div className="font-bold text-cyan-400 flex items-center justify-between">
+                    <span>🔮 [4] Laze Plasma (High Velocity)</span>
+                    <span className="font-mono text-sky-300">8 viên • Hồi 1.6s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Làm đông cứng động cơ đối thủ, giảm 45% tốc độ di chuyển trong 3.5 giây.</p>
+                  <p className="text-slate-400 mt-0.5">Tia plasma siêu thanh bay nhanh gấp 1.8 lần, tầm bắn x1.35, thích hợp bắn tỉa tầm xa.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-red-500/30">
-                  <div className="font-bold text-red-400 flex items-center gap-1.5">
-                    <span>🔥 Đạn Lửa Thiêu Đốt (Incendiary)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-sky-400/40">
+                  <div className="font-bold text-sky-300 flex items-center justify-between">
+                    <span>❄️ [5] Đạn Băng Làm Chậm (Cryo Frost)</span>
+                    <span className="font-mono text-sky-400">6 viên • Hồi 2.2s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Thiêu đốt đối thủ gây thêm sát thương liên tục 5 lần theo thời gian.</p>
+                  <p className="text-slate-400 mt-0.5">Làm đông cứng động cơ đối thủ, giảm 48% tốc độ di chuyển trong 2.5 giây khi trúng đạn.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-emerald-500/30">
-                  <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                    <span>🔄 Đạn Nảy Tường (Ricochet)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-orange-500/40">
+                  <div className="font-bold text-orange-400 flex items-center justify-between">
+                    <span>🔥 [6] Đạn Lửa Thiêu Đốt (Incendiary)</span>
+                    <span className="font-mono text-orange-300">6 viên • Hồi 2.2s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Bật nảy tối đa 2 lần qua các khối thép và gạch, bắn lén qua góc tường.</p>
+                  <p className="text-slate-400 mt-0.5">Thiêu đốt đối thủ gây thêm sát thương liên tục theo thời gian trong 3 giây.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-yellow-500/30">
-                  <div className="font-bold text-yellow-400 flex items-center gap-1.5">
-                    <span>🎯 Đạn Xuyên Giáp (Armor Piercing)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-purple-500/40">
+                  <div className="font-bold text-purple-400 flex items-center justify-between">
+                    <span>🪃 [7] Đạn Nảy Tường (Ricochet)</span>
+                    <span className="font-mono text-purple-300">7 viên • Hồi 1.8s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Bỏ qua 50% lớp khiên giáp năng lượng để trừ trực tiếp vào máu thân xe.</p>
+                  <p className="text-slate-400 mt-0.5">Bật nảy tối đa 2 lần qua các khối thép và gạch, phục kích bắn lén qua góc tường khuất.</p>
                 </div>
 
-                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-slate-700">
-                  <div className="font-bold text-slate-300 flex items-center gap-1.5">
-                    <span>🎯 Đạn Tiêu Chuẩn (Standard)</span>
+                <div className="p-2.5 bg-slate-950/80 rounded-xl border border-emerald-500/40">
+                  <div className="font-bold text-emerald-400 flex items-center justify-between">
+                    <span>🎯 [8] Đạn Xuyên Giáp (Armor Piercing)</span>
+                    <span className="font-mono text-emerald-300">5 viên • Hồi 2.8s</span>
                   </div>
-                  <p className="text-slate-400 mt-0.5">Đạn pháo ổn định, đường đạn thẳng và độ chính xác hoàn hảo.</p>
+                  <p className="text-slate-400 mt-0.5">Bắn xuyên qua vật cản mỏng và xuyên qua nhiều xe địch trên một đường thẳng.</p>
                 </div>
               </div>
             </div>

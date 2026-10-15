@@ -12,6 +12,7 @@ import {
   BossInfo,
   BaseZone,
   GameMode,
+  AMMO_CONFIGS,
 } from '../types/game';
 import { sounds } from '../utils/audio';
 
@@ -103,7 +104,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   bases = [],
   gameMode = 'PUBLIC',
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dynamicCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasRef = dynamicCanvasRef; // Alias for mouse click and event listeners
+
+  // Caching state to prevent unnecessary static background re-renders
+  const lastBgStateRef = useRef<{
+    camX: number;
+    camY: number;
+    zoom: number;
+    width: number;
+    height: number;
+    currentWeather: WeatherType;
+    obstaclesCount: number;
+    basesCount: number;
+    dpr: number;
+  } | null>(null);
 
   // Smooth camera position
   const cameraRef = useRef({ x: worldSize.width / 2, y: worldSize.height / 2 });
@@ -215,29 +231,152 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, [bullets, tanks, myPlayerId]);
 
-  // Main 60fps render loop with 2.5D Isometric/Oblique depth engine
+  // Props ref to allow continuous uninterrupted 60fps/120fps render loop
+  const propsRef = useRef({
+    myPlayerId,
+    tanks,
+    bullets,
+    obstacles,
+    powerUps,
+    landmines,
+    worldSize,
+    is25DMode,
+    zoomScale,
+    isSpectator,
+    spectatorTargetId,
+    freeCameraPos,
+    currentWeather,
+    focusBeacon,
+    isFreeCameraActive,
+    storm,
+    boss,
+    bases,
+    gameMode,
+  });
+
+  propsRef.current = {
+    myPlayerId,
+    tanks,
+    bullets,
+    obstacles,
+    powerUps,
+    landmines,
+    worldSize,
+    is25DMode,
+    zoomScale,
+    isSpectator,
+    spectatorTargetId,
+    freeCameraPos,
+    currentWeather,
+    focusBeacon,
+    isFreeCameraActive,
+    storm,
+    boss,
+    bases,
+    gameMode,
+  };
+
+  const smoothTanksRef = useRef<Map<string, { x: number; y: number; turretAngle: number; angle: number }>>(new Map());
+
+  // Main requestAnimationFrame render loop with separate static background and dynamic entities
   useEffect(() => {
     let animId: number;
+    let lastTimestamp = performance.now();
 
-    const render = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+    const render = (currentTime: number) => {
+      const dynamicCanvas = dynamicCanvasRef.current;
+      if (!dynamicCanvas) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+      const ctx = dynamicCanvas.getContext('2d');
+      if (!ctx) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+      const bgCanvas = bgCanvasRef.current;
+      const bgCtx = bgCanvas ? bgCanvas.getContext('2d') : null;
 
-      const dpr = window.devicePixelRatio || 1;
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
+      // Delta-time with safety bounds (prevents physics spiral or lag jumps)
+      const dt = Math.min(0.05, Math.max(0.001, (currentTime - lastTimestamp) / 1000));
+      lastTimestamp = currentTime;
 
-      if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
+      const {
+        myPlayerId,
+        tanks: rawTanks,
+        bullets,
+        obstacles,
+        powerUps,
+        landmines = [],
+        worldSize,
+        is25DMode = true,
+        zoomScale = 0.75,
+        isSpectator = false,
+        spectatorTargetId = 'free',
+        freeCameraPos,
+        currentWeather = 'DAWN',
+        focusBeacon,
+        isFreeCameraActive = false,
+        storm,
+        boss,
+        bases = [],
+        gameMode = 'PUBLIC',
+      } = propsRef.current;
+
+      // Smooth tank LERP calculation with framerate-independent exponential smoothing
+      const smoothMap = smoothTanksRef.current;
+      const activeIds = new Set<string>();
+      const tankLerp = 1 - Math.exp(-22 * dt);
+      const tanks: PlayerTank[] = rawTanks.map((tank) => {
+        activeIds.add(tank.id);
+        let s = smoothMap.get(tank.id);
+        if (!s) {
+          s = { x: tank.x, y: tank.y, turretAngle: tank.turretAngle, angle: tank.angle || 0 };
+          smoothMap.set(tank.id, s);
+        } else {
+          s.x += (tank.x - s.x) * tankLerp;
+          s.y += (tank.y - s.y) * tankLerp;
+
+          let diffTurret = tank.turretAngle - s.turretAngle;
+          while (diffTurret > Math.PI) diffTurret -= Math.PI * 2;
+          while (diffTurret < -Math.PI) diffTurret += Math.PI * 2;
+          s.turretAngle += diffTurret * tankLerp;
+
+          let targetAngle = tank.angle || 0;
+          let diffAngle = targetAngle - s.angle;
+          while (diffAngle > Math.PI) diffAngle -= Math.PI * 2;
+          while (diffAngle < -Math.PI) diffAngle += Math.PI * 2;
+          s.angle += diffAngle * tankLerp;
+        }
+        return {
+          ...tank,
+          x: s.x,
+          y: s.y,
+          turretAngle: s.turretAngle,
+          angle: s.angle,
+        };
+      });
+
+      for (const id of smoothMap.keys()) {
+        if (!activeIds.has(id)) smoothMap.delete(id);
       }
 
-      ctx.save();
-      ctx.scale(dpr, dpr);
+      const dpr = window.devicePixelRatio || 1;
+      const width = dynamicCanvas.clientWidth;
+      const height = dynamicCanvas.clientHeight;
 
-      // Camera lerp
+      if (dynamicCanvas.width !== width * dpr || dynamicCanvas.height !== height * dpr) {
+        dynamicCanvas.width = width * dpr;
+        dynamicCanvas.height = height * dpr;
+      }
+
+      if (bgCanvas && (bgCanvas.width !== width * dpr || bgCanvas.height !== height * dpr)) {
+        bgCanvas.width = width * dpr;
+        bgCanvas.height = height * dpr;
+        lastBgStateRef.current = null; // Invalidate background cache on resize
+      }
+
+      // Camera lerp with framerate-independent smoothing
       let targetCamX = worldSize.width / 2;
       let targetCamY = worldSize.height / 2;
 
@@ -269,16 +408,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      cameraRef.current.x += (targetCamX - cameraRef.current.x) * 0.14;
-      cameraRef.current.y += (targetCamY - cameraRef.current.y) * 0.14;
+      const camLerp = 1 - Math.exp(-12 * dt);
+      cameraRef.current.x += (targetCamX - cameraRef.current.x) * camLerp;
+      cameraRef.current.y += (targetCamY - cameraRef.current.y) * camLerp;
 
-      // Screen shake
+      // Screen shake decay with delta time
       let shakeOffsetX = 0;
       let shakeOffsetY = 0;
       if (screenShakeRef.current > 0) {
         shakeOffsetX = (Math.random() - 0.5) * screenShakeRef.current;
         shakeOffsetY = (Math.random() - 0.5) * screenShakeRef.current;
-        screenShakeRef.current = Math.max(0, screenShakeRef.current - 0.65);
+        screenShakeRef.current = Math.max(0, screenShakeRef.current - 38 * dt);
       }
 
       const camX = cameraRef.current.x + shakeOffsetX;
@@ -292,10 +432,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const viewTop = camY - viewHeight / 2;
       const now = Date.now();
 
-      // Decay recoil
+      // Decay recoil with delta time
       for (const [id, r] of tankRecoilRef.current) {
         if (r > 0.01) {
-          tankRecoilRef.current.set(id, r * 0.85);
+          tankRecoilRef.current.set(id, r * Math.exp(-9 * dt));
         } else {
           tankRecoilRef.current.delete(id);
         }
@@ -304,68 +444,209 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const weatherCfg = WEATHER_CONFIGS[currentWeather] || WEATHER_CONFIGS.DAWN;
 
       // ==========================================
-      // 1. TERRAIN BASE & GROUND TEXTURE
+      // 1. STATIC BACKGROUND PASS (Layer 1 on bgCanvas)
+      // Only redrawn when camera viewport moves or zoom/weather changes!
       // ==========================================
-      ctx.fillStyle = weatherCfg.groundBgColor; // Dynamic weather tactical ground
-      ctx.fillRect(0, 0, width, height);
+      const needBgRedraw =
+        !lastBgStateRef.current ||
+        Math.abs(camX - lastBgStateRef.current.camX) > 0.25 ||
+        Math.abs(camY - lastBgStateRef.current.camY) > 0.25 ||
+        lastBgStateRef.current.zoom !== zoom ||
+        lastBgStateRef.current.width !== width ||
+        lastBgStateRef.current.height !== height ||
+        lastBgStateRef.current.currentWeather !== currentWeather ||
+        lastBgStateRef.current.obstaclesCount !== obstacles.length ||
+        lastBgStateRef.current.basesCount !== bases.length ||
+        lastBgStateRef.current.dpr !== dpr;
+
+      if (needBgRedraw && bgCtx) {
+        lastBgStateRef.current = {
+          camX,
+          camY,
+          zoom,
+          width,
+          height,
+          currentWeather,
+          obstaclesCount: obstacles.length,
+          basesCount: bases.length,
+          dpr,
+        };
+
+        bgCtx.save();
+        bgCtx.scale(dpr, dpr);
+
+        // Dynamic weather tactical ground fill
+        bgCtx.fillStyle = weatherCfg.groundBgColor;
+        bgCtx.fillRect(0, 0, width, height);
+
+        bgCtx.save();
+        bgCtx.translate(width / 2, height / 2);
+        bgCtx.scale(zoom, zoom);
+        bgCtx.translate(-camX, -camY);
+
+        // Tactical grid with dynamic weather ambient tint
+        const gridSize = 100;
+        const startX = Math.floor(Math.max(0, viewLeft) / gridSize) * gridSize;
+        const endX = Math.min(worldSize.width, viewLeft + viewWidth + gridSize);
+        const startY = Math.floor(Math.max(0, viewTop) / gridSize) * gridSize;
+        const endY = Math.min(worldSize.height, viewTop + viewHeight + gridSize);
+
+        bgCtx.strokeStyle = weatherCfg.gridColor;
+        bgCtx.lineWidth = 1;
+        bgCtx.beginPath();
+        for (let x = startX; x <= endX; x += gridSize) {
+          bgCtx.moveTo(x, Math.max(0, viewTop));
+          bgCtx.lineTo(x, Math.min(worldSize.height, viewTop + viewHeight));
+        }
+        for (let y = startY; y <= endY; y += gridSize) {
+          bgCtx.moveTo(Math.max(0, viewLeft), y);
+          bgCtx.lineTo(Math.min(worldSize.width, viewLeft + viewWidth), y);
+        }
+        bgCtx.stroke();
+
+        // Sector Markings / Ground Stencils
+        bgCtx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+        bgCtx.font = 'bold 36px font-mono, sans-serif';
+        bgCtx.textAlign = 'center';
+        bgCtx.textBaseline = 'middle';
+        bgCtx.fillText('SECTOR 01: CITADEL', worldSize.width / 2, worldSize.height / 2 - 320);
+        bgCtx.fillText('SECTOR NW: INDUSTRIAL', 1000, 700);
+        bgCtx.fillText('SECTOR NE: RIVER DELTA', 3100, 700);
+        bgCtx.fillText('SECTOR SW: AMBUSH RUINS', 1000, 2750);
+        bgCtx.fillText('SECTOR SE: PROVING GROUND', 3100, 2750);
+
+        // Arena Outer Perimeter Warning Stripes
+        const borderThick = 44;
+        bgCtx.fillStyle = '#090d16';
+        bgCtx.fillRect(0, 0, worldSize.width, borderThick);
+        bgCtx.fillRect(0, worldSize.height - borderThick, worldSize.width, borderThick);
+        bgCtx.fillRect(0, 0, borderThick, worldSize.height);
+        bgCtx.fillRect(worldSize.width - borderThick, 0, borderThick, worldSize.height);
+
+        // Yellow/Black diagonal hazard pattern on perimeter
+        bgCtx.strokeStyle = 'rgba(234, 179, 8, 0.4)';
+        bgCtx.lineWidth = 4;
+        for (let x = 0; x < worldSize.width; x += 30) {
+          bgCtx.beginPath();
+          bgCtx.moveTo(x, 0);
+          bgCtx.lineTo(x + 20, borderThick);
+          bgCtx.stroke();
+          bgCtx.beginPath();
+          bgCtx.moveTo(x, worldSize.height - borderThick);
+          bgCtx.lineTo(x + 20, worldSize.height);
+          bgCtx.stroke();
+        }
+
+        // Static Sunken Terrain: Water Lakes & Rivers (base basin & shoreline)
+        for (const obs of obstacles) {
+          if (obs.type !== 'WATER') continue;
+          bgCtx.fillStyle = '#06263b';
+          bgCtx.fillRect(obs.x - 4, obs.y - 4, obs.w + 8, obs.h + 8);
+
+          const waterGrad = bgCtx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
+          waterGrad.addColorStop(0, '#0284c7');
+          waterGrad.addColorStop(0.5, '#0369a1');
+          waterGrad.addColorStop(1, '#075985');
+          bgCtx.fillStyle = waterGrad;
+          bgCtx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
+          bgCtx.strokeStyle = '#38bdf8';
+          bgCtx.lineWidth = 2;
+          bgCtx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+        }
+
+        // Team Deathmatch Bases (Static Floor & Boundary)
+        for (const base of bases) {
+          bgCtx.save();
+          const isRed = base.team === 'RED';
+          const baseColor = isRed ? '#ef4444' : '#3b82f6';
+
+          bgCtx.fillStyle = isRed ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+          bgCtx.fillRect(base.x, base.y, base.w, base.h);
+
+          bgCtx.strokeStyle = isRed ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)';
+          bgCtx.lineWidth = 1;
+          const bStep = 40;
+          for (let bx = base.x; bx <= base.x + base.w; bx += bStep) {
+            bgCtx.beginPath();
+            bgCtx.moveTo(bx, base.y);
+            bgCtx.lineTo(bx, base.y + base.h);
+            bgCtx.stroke();
+          }
+          for (let by = base.y; by <= base.y + base.h; by += bStep) {
+            bgCtx.beginPath();
+            bgCtx.moveTo(base.x, by);
+            bgCtx.lineTo(base.x + base.w, by);
+            bgCtx.stroke();
+          }
+
+          bgCtx.strokeStyle = baseColor;
+          bgCtx.lineWidth = 2.5;
+          bgCtx.setLineDash([12, 8]);
+          bgCtx.strokeRect(base.x, base.y, base.w, base.h);
+          bgCtx.setLineDash([]);
+
+          const cx = base.x + base.w / 2;
+          const cy = base.y + base.h / 2;
+          bgCtx.fillStyle = baseColor;
+          bgCtx.shadowColor = baseColor;
+          bgCtx.shadowBlur = 12;
+          bgCtx.font = 'black 18px Plus Jakarta Sans, sans-serif';
+          bgCtx.textAlign = 'center';
+          bgCtx.textBaseline = 'middle';
+          bgCtx.fillText(isRed ? '🔴 CĂN CỨ ĐỘI ĐỎ' : '🔵 CĂN CỨ ĐỘI XANH', cx, cy - 14);
+
+          bgCtx.font = 'bold 11px monospace';
+          bgCtx.fillStyle = '#ffffff';
+          bgCtx.shadowBlur = 4;
+          bgCtx.fillText('💚 VÙNG HỒI MÁU (+10 HP/s & HỒI GIÁP)', cx, cy + 14);
+          bgCtx.restore();
+        }
+
+        bgCtx.restore();
+        bgCtx.restore();
+      }
+
+      // ==========================================
+      // 2. DYNAMIC ENTITIES PASS (Layer 2 on dynamicCanvas)
+      // Clears dynamic frame, keeping static background intact!
+      // ==========================================
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, width, height);
 
       ctx.save();
-      // Center-scale zoom (like Chrome 75% zoom)
       ctx.translate(width / 2, height / 2);
       ctx.scale(zoom, zoom);
       ctx.translate(-camX, -camY);
 
-      // Tactical grid with dynamic weather ambient tint
-      const gridSize = 100;
-      const startX = Math.floor(Math.max(0, viewLeft) / gridSize) * gridSize;
-      const endX = Math.min(worldSize.width, viewLeft + viewWidth + gridSize);
-      const startY = Math.floor(Math.max(0, viewTop) / gridSize) * gridSize;
-      const endY = Math.min(worldSize.height, viewTop + viewHeight + gridSize);
-
-      ctx.strokeStyle = weatherCfg.gridColor;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = startX; x <= endX; x += gridSize) {
-        ctx.moveTo(x, Math.max(0, viewTop));
-        ctx.lineTo(x, Math.min(worldSize.height, viewTop + viewHeight));
-      }
-      for (let y = startY; y <= endY; y += gridSize) {
-        ctx.moveTo(Math.max(0, viewLeft), y);
-        ctx.lineTo(Math.min(worldSize.width, viewLeft + viewWidth), y);
-      }
-      ctx.stroke();
-
-      // Sector Markings / Ground Stencils
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.font = 'bold 36px font-mono, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('SECTOR 01: CITADEL', worldSize.width / 2, worldSize.height / 2 - 320);
-      ctx.fillText('SECTOR NW: INDUSTRIAL', 1000, 700);
-      ctx.fillText('SECTOR NE: RIVER DELTA', 3100, 700);
-      ctx.fillText('SECTOR SW: AMBUSH RUINS', 1000, 2750);
-      ctx.fillText('SECTOR SE: PROVING GROUND', 3100, 2750);
-
-      // Arena Outer Perimeter Warning Stripes
-      const borderThick = 44;
-      ctx.fillStyle = '#090d16';
-      ctx.fillRect(0, 0, worldSize.width, borderThick);
-      ctx.fillRect(0, worldSize.height - borderThick, worldSize.width, borderThick);
-      ctx.fillRect(0, 0, borderThick, worldSize.height);
-      ctx.fillRect(worldSize.width - borderThick, 0, borderThick, worldSize.height);
-
-      // Yellow/Black diagonal hazard pattern on perimeter
-      ctx.strokeStyle = 'rgba(234, 179, 8, 0.4)';
-      ctx.lineWidth = 4;
-      for (let x = 0; x < worldSize.width; x += 30) {
+      // 2.1 Animated Water Caustics / Sun Glare Ripples on Dynamic Canvas
+      for (const obs of obstacles) {
+        if (obs.type !== 'WATER') continue;
+        ctx.strokeStyle = '#7dd3fc';
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.45;
+        const waveOffset = (now / 350) % 40;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x + 20, borderThick);
+        for (let y = obs.y + 15; y < obs.y + obs.h - 10; y += 30) {
+          ctx.moveTo(obs.x + 12, y + Math.sin(y * 0.1 + waveOffset) * 4);
+          ctx.lineTo(obs.x + obs.w - 12, y + Math.sin(y * 0.1 + waveOffset) * 4);
+        }
         ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(x, worldSize.height - borderThick);
-        ctx.lineTo(x + 20, worldSize.height);
-        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // 2.2 Floating Animated Healing Crosses in Bases
+      for (const base of bases) {
+        const isRed = base.team === 'RED';
+        ctx.fillStyle = isRed ? 'rgba(252, 165, 165, 0.65)' : 'rgba(147, 197, 253, 0.65)';
+        for (let i = 0; i < 6; i++) {
+          const crossX = base.x + 40 + ((i * 55 + (now / 20)) % (base.w - 80));
+          const crossY = base.y + 60 + ((i * 120 + (now / 15)) % (base.h - 120));
+          const cSize = 6;
+          ctx.fillRect(crossX - cSize / 2, crossY - 1.5, cSize, 3);
+          ctx.fillRect(crossX - 1.5, crossY - cSize / 2, 3, cSize);
+        }
       }
 
       // ==========================================
@@ -505,107 +786,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
-      // ==========================================
-      // 3. SUNKEN TERRAIN: WATER LAKES & RIVERS
-      // ==========================================
-      for (const obs of obstacles) {
-        if (obs.type !== 'WATER') continue;
-
-        // 2.5D Shore Embankment (Dark bevel drop into water basin)
-        ctx.fillStyle = '#06263b';
-        ctx.fillRect(obs.x - 4, obs.y - 4, obs.w + 8, obs.h + 8);
-
-        // Water basin fill
-        const waterGrad = ctx.createLinearGradient(obs.x, obs.y, obs.x, obs.y + obs.h);
-        waterGrad.addColorStop(0, '#0284c7');
-        waterGrad.addColorStop(0.5, '#0369a1');
-        waterGrad.addColorStop(1, '#075985');
-        ctx.fillStyle = waterGrad;
-        ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-
-        // 2.5D Animated Water Caustics / Sun Glare Ripples
-        ctx.strokeStyle = '#7dd3fc';
-        ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.45;
-        const waveOffset = (now / 350) % 40;
-        ctx.beginPath();
-        for (let y = obs.y + 15; y < obs.y + obs.h - 10; y += 30) {
-          ctx.moveTo(obs.x + 12, y + Math.sin(y * 0.1 + waveOffset) * 4);
-          ctx.lineTo(obs.x + obs.w - 12, y + Math.sin(y * 0.1 + waveOffset) * 4);
-        }
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-
-        // Shoreline highlight
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-      }
-
-      // ==========================================
-      // 3.5. TEAM DEATHMATCH BASES (Căn Cứ Hồi Máu Đội Đỏ & Đội Xanh)
-      // ==========================================
-      for (const base of bases) {
-        ctx.save();
-        const isRed = base.team === 'RED';
-        const baseColor = isRed ? '#ef4444' : '#3b82f6';
-        const pulse = 0.5 + Math.sin(now / 350) * 0.5;
-
-        // Base field glow
-        ctx.fillStyle = isRed ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)';
-        ctx.fillRect(base.x, base.y, base.w, base.h);
-
-        // Tech Floor Grid in base
-        ctx.strokeStyle = isRed ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)';
-        ctx.lineWidth = 1;
-        const bStep = 40;
-        for (let bx = base.x; bx <= base.x + base.w; bx += bStep) {
-          ctx.beginPath();
-          ctx.moveTo(bx, base.y);
-          ctx.lineTo(bx, base.y + base.h);
-          ctx.stroke();
-        }
-        for (let by = base.y; by <= base.y + base.h; by += bStep) {
-          ctx.beginPath();
-          ctx.moveTo(base.x, by);
-          ctx.lineTo(base.x + base.w, by);
-          ctx.stroke();
-        }
-
-        // Perimeter Forcefield Border
-        ctx.strokeStyle = baseColor;
-        ctx.lineWidth = 2.5;
-        ctx.setLineDash([12, 8]);
-        ctx.strokeRect(base.x, base.y, base.w, base.h);
-        ctx.setLineDash([]);
-
-        // Floating Healing Crosses in base
-        ctx.fillStyle = isRed ? 'rgba(252, 165, 165, 0.65)' : 'rgba(147, 197, 253, 0.65)';
-        for (let i = 0; i < 6; i++) {
-          const crossX = base.x + 40 + ((i * 55 + (now / 20)) % (base.w - 80));
-          const crossY = base.y + 60 + ((i * 120 + (now / 15)) % (base.h - 120));
-          const cSize = 6;
-          ctx.fillRect(crossX - cSize / 2, crossY - 1.5, cSize, 3);
-          ctx.fillRect(crossX - 1.5, crossY - cSize / 2, 3, cSize);
-        }
-
-        // Tactical Holographic Center Emblem & Text
-        const cx = base.x + base.w / 2;
-        const cy = base.y + base.h / 2;
-        ctx.fillStyle = baseColor;
-        ctx.shadowColor = baseColor;
-        ctx.shadowBlur = 12;
-        ctx.font = 'black 18px Plus Jakarta Sans, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(isRed ? '🔴 CĂN CỨ ĐỘI ĐỎ' : '🔵 CĂN CỨ ĐỘI XANH', cx, cy - 14);
-
-        ctx.font = 'bold 11px monospace';
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowBlur = 4;
-        ctx.fillText('💚 VÙNG HỒI MÁU (+10 HP/s & HỒI GIÁP)', cx, cy + 14);
-        ctx.restore();
-      }
 
       // ==========================================
       // 4. TANK HEADLIGHT BEAMS (Projected on ground in front of living tanks)
@@ -1748,6 +1928,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = expGrad;
           ctx.fillRect(-barW / 2, barY + barH + 1.5, barW * expRatio, 3.5);
 
+          // Render Floating Ammo Pips & Reload Indicator
+          const selAmmo = tank.selectedAmmo || 'STANDARD';
+          const ammoCount = tank.ammoInventory?.[selAmmo] ?? 0;
+          const maxAmmoCount = AMMO_CONFIGS[selAmmo]?.maxAmmo || 15;
+          const ammoColor = AMMO_CONFIGS[selAmmo]?.color || '#38bdf8';
+
+          if (ammoCount <= 0) {
+            // Flashing Reload Indicator
+            ctx.save();
+            ctx.font = 'bold 7.5px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = Math.sin(now / 150) > 0 ? '#ef4444' : '#f59e0b';
+            ctx.fillText('⚡ NẠP ĐẠN...', 0, barY + barH + 11.5);
+            ctx.restore();
+          } else {
+            // Mini ammo dashes
+            const pipCount = Math.min(12, maxAmmoCount);
+            const pipW = Math.max(2, (barW - (pipCount - 1) * 1.5) / pipCount);
+            const pipsStartX = -barW / 2;
+            const pipY = barY + barH + 6.5;
+            for (let p = 0; p < pipCount; p++) {
+              const active = p < Math.round((ammoCount / maxAmmoCount) * pipCount);
+              ctx.fillStyle = active ? ammoColor : 'rgba(71, 85, 105, 0.4)';
+              ctx.fillRect(pipsStartX + p * (pipW + 1.5), pipY, pipW, 2);
+            }
+          }
+
           // MOBA-style Circular Hero Level Badge on the left of HP bar
           const badgeX = -barW / 2 - 10;
           const badgeY = barY + barH / 2;
@@ -2566,27 +2773,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     animId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animId);
-  }, [
-    tanks,
-    bullets,
-    obstacles,
-    powerUps,
-    worldSize,
-    myPlayerId,
-    is25DMode,
-    zoomScale,
-    isSpectator,
-    spectatorTargetId,
-    freeCameraPos,
-    currentWeather,
-    focusBeacon,
-    isFreeCameraActive,
-    storm,
-    boss,
-    bases,
-    gameMode,
-  ]);
+    return () => {
+      if (animId) {
+        cancelAnimationFrame(animId);
+      }
+    };
+  }, []);
 
   // Drag-to-pan camera state
   const isDraggingRef = useRef(false);
@@ -2703,16 +2895,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   return (
-    <canvas
-      ref={canvasRef}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onClick={handleCanvasClick}
-      onContextMenu={handleContextMenu}
-      className={`w-full h-full block select-none touch-none ${
-        isSpectator ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
-      }`}
-    />
+    <div className="relative w-full h-full select-none touch-none overflow-hidden">
+      {/* 1. Static Environment Background Canvas (Ground, Grid, Perimeter, Stencils, Bases, Water basins) */}
+      <canvas
+        ref={bgCanvasRef}
+        className="absolute inset-0 w-full h-full pointer-events-none block"
+      />
+      {/* 2. Dynamic Entities & FX Canvas (Tanks, Bullets, Explosions, Particles, Range Indicator, Weather) */}
+      <canvas
+        ref={dynamicCanvasRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onClick={handleCanvasClick}
+        onContextMenu={handleContextMenu}
+        className={`absolute inset-0 w-full h-full block ${
+          isSpectator ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
+        }`}
+      />
+    </div>
   );
 };

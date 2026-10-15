@@ -43,6 +43,10 @@ import {
   RankTier,
   getRankFromRp,
   QueueMatchedPlayer,
+  OnlinePlayerInfo,
+  FriendUser,
+  AMMO_TYPES,
+  AMMO_CONFIGS,
 } from './types/game';
 import { GameCanvas } from './components/GameCanvas';
 import { RadarMinimap } from './components/RadarMinimap';
@@ -56,6 +60,7 @@ import { SpectatorHUD } from './components/SpectatorHUD';
 import { HelpModal } from './components/HelpModal';
 import { VirtualJoystick } from './components/VirtualJoystick';
 import { SkillBarHUD } from './components/SkillBarHUD';
+import { BulletModeSelector } from './components/BulletModeSelector';
 import { PerkSelectModal } from './components/PerkSelectModal';
 import { GarageModal } from './components/GarageModal';
 import { FriendsModal } from './components/FriendsModal';
@@ -149,11 +154,13 @@ export default function App() {
     publicOnlineCount: number;
     publicPlayers: PublicPlayerInfo[];
     customRooms?: CustomRoomSummary[];
+    activeRooms?: CustomRoomSummary[];
   }>({
     totalSockets: 0,
     publicOnlineCount: 0,
     publicPlayers: [],
     customRooms: [],
+    activeRooms: [],
   });
   const [recentCombatEvent, setRecentCombatEvent] = useState<CombatEvent | null>(null);
 
@@ -227,6 +234,33 @@ export default function App() {
     }
   });
   const [isFriendsOpen, setIsFriendsOpen] = useState(false);
+  const [myFriendCode] = useState<string>(() => {
+    let code = localStorage.getItem('tank_my_friend_code');
+    if (!code) {
+      code = `DLAND-${Math.floor(1000 + Math.random() * 9000)}`;
+      localStorage.setItem('tank_my_friend_code', code);
+    }
+    return code;
+  });
+  const [onlinePlayers, setOnlinePlayers] = useState<OnlinePlayerInfo[]>([]);
+  const [pendingFriendRequests, setPendingFriendRequests] = useState<
+    Array<{
+      id: string;
+      name: string;
+      friendCode: string;
+      rankRp: number;
+      tankClass: TankClass;
+      color?: string;
+      rankTier?: RankTier;
+    }>
+  >([]);
+  const [incomingFriendInvite, setIncomingFriendInvite] = useState<{
+    senderId: string;
+    senderName: string;
+    matchType: MatchType;
+    roomId: string;
+    mode: GameMode;
+  } | null>(null);
 
   // 6-Player 3v3 Matchmaking Queue State
   const [queueStatus, setQueueStatus] = useState<{
@@ -328,13 +362,22 @@ export default function App() {
 
   const socketRef = useRef<WebSocket | null>(null);
   const isInGameRef = useRef(false);
-  const inputStateRef = useRef({
+  const inputStateRef = useRef<{
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    turretAngle: number;
+    isFiring: boolean;
+    selectedAmmo?: BulletModifier;
+  }>({
     up: false,
     down: false,
     left: false,
     right: false,
     turretAngle: 0,
     isFiring: false,
+    selectedAmmo: 'STANDARD',
   });
 
   // Calculate turret angle from WASD movement directions (Tank 1990 style)
@@ -633,6 +676,13 @@ export default function App() {
   };
 
   const handleExitGame = () => {
+    sounds.stopBgm();
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'LEAVE' }));
+    }
+    setIsInGameSettingsOpen(false);
+    setIsAudioSettingsOpen(false);
+    setIsScoreboardOpen(false);
     setIsInGame(false);
     setIsSpectator(false);
     setIsFreeCameraActive(false);
@@ -674,6 +724,17 @@ export default function App() {
     }
   };
 
+  const handleSwitchAmmo = useCallback((type: BulletModifier) => {
+    inputStateRef.current.selectedAmmo = type;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      const msg: ClientMessage = {
+        type: 'SWITCH_AMMO',
+        ammoType: type,
+      };
+      socketRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
+
   // Immediate send input function
   const sendInput = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -700,6 +761,19 @@ export default function App() {
 
       ws.onopen = () => {
         setIsSocketConnected(true);
+
+        // Register profile with friend code and commander info
+        const regMsg: ClientMessage = {
+          type: 'REGISTER_PROFILE',
+          friendCode: myFriendCode,
+          name: profileRef.current.name,
+          color: profileRef.current.color,
+          tankClass: profileRef.current.tankClass,
+          rankRp: playerRankRp,
+          currentMode: profileRef.current.mode,
+        };
+        ws.send(JSON.stringify(regMsg));
+
         // If already in game, auto-rejoin immediately
         if (isInGameRef.current) {
           const joinMsg: ClientMessage = {
@@ -731,7 +805,11 @@ export default function App() {
                 publicOnlineCount: msg.publicOnlineCount,
                 publicPlayers: msg.publicPlayers || [],
                 customRooms: msg.customRooms || [],
+                activeRooms: msg.activeRooms || msg.customRooms || [],
               });
+              if (msg.onlinePlayers) {
+                setOnlinePlayers(msg.onlinePlayers);
+              }
               break;
             }
 
@@ -772,7 +850,9 @@ export default function App() {
               setTanks(msg.snapshot.tanks);
               setBullets(msg.snapshot.bullets);
               setPowerUps(msg.snapshot.powerUps);
-              setObstacles(msg.snapshot.obstacles);
+              if (msg.snapshot.obstacles && msg.snapshot.obstacles.length > 0) {
+                setObstacles(msg.snapshot.obstacles);
+              }
               setLandmines(msg.snapshot.landmines || []);
               setLeaderboard(msg.snapshot.leaderboard);
 
@@ -914,6 +994,68 @@ export default function App() {
               });
               break;
             }
+
+            case 'ONLINE_PLAYERS_UPDATE': {
+              setOnlinePlayers(msg.players || []);
+              break;
+            }
+
+            case 'FRIEND_REQUEST_RECEIVED': {
+              if (msg.from) {
+                setPendingFriendRequests((prev) => [
+                  ...prev.filter((r) => r.friendCode !== msg.from.friendCode),
+                  msg.from,
+                ]);
+                sounds.playRadioBeep();
+                setAccountToast({
+                  show: true,
+                  text: `👋 Chiến binh ${msg.from.name} (${msg.from.friendCode}) vừa gửi lời mời kết bạn!`,
+                });
+                setTimeout(() => setAccountToast(null), 5000);
+              }
+              break;
+            }
+
+            case 'FRIEND_REQUEST_ACCEPTED': {
+              if (msg.from) {
+                sounds.playPowerUp();
+                setAccountToast({
+                  show: true,
+                  text: `🤝 ${msg.from.name} đã chấp nhận lời mời kết bạn của bạn!`,
+                });
+                setTimeout(() => setAccountToast(null), 5000);
+                try {
+                  const saved = localStorage.getItem('tank_friends_list');
+                  const list: FriendUser[] = saved ? JSON.parse(saved) : [];
+                  if (!list.some((f) => f.friendCode === msg.from.friendCode)) {
+                    list.unshift({
+                      id: msg.from.id,
+                      friendCode: msg.from.friendCode,
+                      name: msg.from.name,
+                      color: msg.from.color || '#10b981',
+                      tankClass: msg.from.tankClass,
+                      rankTier: msg.from.rankTier || 'GOLD',
+                      rankRp: msg.from.rankRp,
+                      status: 'ONLINE',
+                      roomId: 'public',
+                      lastActive: 'Vừa kết bạn',
+                    });
+                    localStorage.setItem('tank_friends_list', JSON.stringify(list));
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+              break;
+            }
+
+            case 'FRIEND_INVITE_RECEIVED': {
+              if (msg.from) {
+                sounds.playRadioBeep();
+                setIncomingFriendInvite(msg.from);
+              }
+              break;
+            }
           }
         } catch (err) {
           console.error('Error parsing WS message:', err);
@@ -940,7 +1082,84 @@ export default function App() {
       clearInterval(pingInterval);
       if (ws) ws.close();
     };
+  }, [myFriendCode, playerRankRp]);
+
+  const handleSendFriendRequest = useCallback(
+    (targetFriendCode: string, targetPlayerId?: string) => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        const msg: ClientMessage = {
+          type: 'FRIEND_REQUEST',
+          targetFriendCode,
+          targetPlayerId,
+          sender: {
+            id: myPlayerId,
+            friendCode: myFriendCode,
+            name: profileRef.current.name,
+            color: profileRef.current.color,
+            tankClass: profileRef.current.tankClass,
+            rankRp: playerRankRp,
+          },
+        };
+        socketRef.current.send(JSON.stringify(msg));
+      }
+    },
+    [myPlayerId, myFriendCode, playerRankRp]
+  );
+
+  const handleAcceptFriendRequest = useCallback(
+    (req: {
+      id: string;
+      name: string;
+      friendCode: string;
+      rankRp: number;
+      tankClass: TankClass;
+      color?: string;
+      rankTier?: RankTier;
+    }) => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        const msg: ClientMessage = {
+          type: 'FRIEND_ACCEPT',
+          targetPlayerId: req.id,
+          targetFriendCode: req.friendCode,
+          sender: {
+            id: myPlayerId,
+            friendCode: myFriendCode,
+            name: profileRef.current.name,
+            color: profileRef.current.color,
+            tankClass: profileRef.current.tankClass,
+            rankRp: playerRankRp,
+          },
+        };
+        socketRef.current.send(JSON.stringify(msg));
+      }
+      setPendingFriendRequests((prev) =>
+        prev.filter((r) => r.friendCode !== req.friendCode && r.id !== req.id)
+      );
+    },
+    [myPlayerId, myFriendCode, playerRankRp]
+  );
+
+  const handleDeclineFriendRequest = useCallback((reqId: string) => {
+    setPendingFriendRequests((prev) => prev.filter((r) => r.id !== reqId));
   }, []);
+
+  const handleInviteFriend = useCallback(
+    (friend: FriendUser, inviteType: 'CASUAL' | 'RANKED') => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        const msg: ClientMessage = {
+          type: 'FRIEND_INVITE',
+          targetFriendCode: friend.friendCode,
+          targetPlayerId: friend.id,
+          senderName: profileRef.current.name,
+          matchType: inviteType,
+          roomId: profileRef.current.roomId || 'public',
+          mode: profileRef.current.mode || 'PUBLIC',
+        };
+        socketRef.current.send(JSON.stringify(msg));
+      }
+    },
+    []
+  );
 
   // Interval sync for held inputs at 30Hz
   useEffect(() => {
@@ -1105,38 +1324,48 @@ export default function App() {
         }
       }
 
-      // Hotkeys to Upgrade Skills (Cộng chiêu thức): 1 (Boost), 2 (Shield), 3 (Mine), 4 (Barrage)
-      if (k === '1' || (e.ctrlKey && k === '1')) {
+      // Hotkeys to Upgrade Skills (Ctrl + 1-4 when skill points available)
+      if (e.ctrlKey) {
         const myT = tanks.find((t) => t.id === myPlayerId);
         if (myT && (myT.skillPoints || 0) > 0) {
-          e.preventDefault();
-          handleUpgradeSkill('BOOST');
-          return;
+          if (k === '1') {
+            e.preventDefault();
+            handleUpgradeSkill('BOOST');
+            return;
+          }
+          if (k === '2') {
+            e.preventDefault();
+            handleUpgradeSkill('SHIELD');
+            return;
+          }
+          if (k === '3') {
+            e.preventDefault();
+            handleUpgradeSkill('MINE');
+            return;
+          }
+          if (k === '4') {
+            e.preventDefault();
+            handleUpgradeSkill('BARRAGE');
+            return;
+          }
         }
       }
-      if (k === '2' || (e.ctrlKey && k === '2')) {
+
+      // Bullet Ammo Hotkeys: Locked during battle (1 bullet type per life, re-select on respawn)
+      if (['1', '2', '3', '4', '5', '6', '7', '8', 'z', 'x', 'b'].includes(k) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        sounds.playRadioBeep();
+        haptics.medium();
         const myT = tanks.find((t) => t.id === myPlayerId);
-        if (myT && (myT.skillPoints || 0) > 0) {
-          e.preventDefault();
-          handleUpgradeSkill('SHIELD');
-          return;
-        }
-      }
-      if (k === '3' || (e.ctrlKey && k === '3')) {
-        const myT = tanks.find((t) => t.id === myPlayerId);
-        if (myT && (myT.skillPoints || 0) > 0) {
-          e.preventDefault();
-          handleUpgradeSkill('MINE');
-          return;
-        }
-      }
-      if (k === '4' || (e.ctrlKey && k === '4')) {
-        const myT = tanks.find((t) => t.id === myPlayerId);
-        if (myT && (myT.skillPoints || 0) > 0) {
-          e.preventDefault();
-          handleUpgradeSkill('BARRAGE');
-          return;
-        }
+        const curAmmo = myT?.selectedAmmo || 'STANDARD';
+        const curCfg = AMMO_CONFIGS[curAmmo];
+        setWeatherToast({
+          name: 'ĐẠN CỐ ĐỊNH TRONG TRẬN',
+          icon: '🔒',
+          description: `Bạn đang sử dụng ${curCfg.vietnameseName} (${curCfg.icon}). Hãy chọn đạn mới khi xe tăng hồi sinh!`,
+          themeColor: '#f59e0b',
+        });
+        return;
       }
 
       // Tactical Skill Shortcuts: Shift (Boost), Q/F (Shield), E (Mine), R (Barrage)
@@ -1332,6 +1561,38 @@ export default function App() {
       return;
     }
 
+    // Spectator Guard: Do not enter spectator if room has nobody
+    if (spectator) {
+      const isPublic = !customRoomId || customRoomId === 'public';
+      const hasPublicPlayers = (lobbyInfo.publicOnlineCount > 0) || (lobbyInfo.publicPlayers && lobbyInfo.publicPlayers.length > 0);
+      if (isPublic && !hasPublicPlayers && selectedBots === 0) {
+        setAccountToast({
+          show: true,
+          text: '⚠️ Trận đấu hiện chưa có người chơi nào để vào xem!',
+        });
+        setTimeout(() => setAccountToast(null), 3500);
+        sounds.playRadioBeep();
+        return;
+      }
+      if (!isPublic) {
+        const found = lobbyInfo.activeRooms?.find((r) => r.id === customRoomId) || lobbyInfo.customRooms?.find((r) => r.id === customRoomId);
+        if (found && found.playerCount === 0 && (!found.botCount || found.botCount === 0)) {
+          setAccountToast({
+            show: true,
+            text: '⚠️ Phòng này hiện chưa có ai tham chiến để xem!',
+          });
+          setTimeout(() => setAccountToast(null), 3500);
+          sounds.playRadioBeep();
+          return;
+        }
+      }
+    }
+
+    // Always reset in-game modals when joining battle to prevent old leave dialog from re-showing
+    setIsInGameSettingsOpen(false);
+    setIsAudioSettingsOpen(false);
+    setIsScoreboardOpen(false);
+
     const finalMatchType = chosenMatchType || matchType;
     setMatchType(finalMatchType);
     setGameMode(mode);
@@ -1470,9 +1731,21 @@ export default function App() {
     setIsSpectator(nextSpectatorState);
 
     if (nextSpectatorState) {
-      // Switch to Spectator
-      const otherAlive = tanks.find((t) => t.id !== myPlayerId && !t.isDead);
-      setSpectatorTargetId(otherAlive ? otherAlive.id : 'free');
+      // User rule: Do not enter spectator if there's no one alive to watch
+      const aliveTanks = tanks.filter((t) => t.id !== myPlayerId && !t.isDead);
+      if (aliveTanks.length === 0) {
+        setWeatherToast({
+          name: 'KHÔNG THỂ VÀO XEM',
+          icon: '⚠️',
+          description: 'Trận đấu hiện không có người chơi nào khác đang chiến đấu để xem!',
+          themeColor: '#ef4444',
+        });
+        sounds.playRadioBeep();
+        return;
+      }
+
+      setIsSpectator(true);
+      setSpectatorTargetId(aliveTanks[0].id);
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(
           JSON.stringify({
@@ -1482,6 +1755,7 @@ export default function App() {
         );
       }
     } else {
+      setIsSpectator(false);
       // Switch to active combat
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(
@@ -1613,9 +1887,12 @@ export default function App() {
     }
   };
 
-  const handleRespawn = () => {
+  const handleRespawn = (chosenAmmo?: BulletModifier) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
-      const respawnMsg: ClientMessage = { type: 'RESPAWN' };
+      const respawnMsg: ClientMessage = {
+        type: 'RESPAWN',
+        ammoType: chosenAmmo,
+      };
       socketRef.current.send(JSON.stringify(respawnMsg));
     }
   };
@@ -1825,6 +2102,30 @@ export default function App() {
             if (updated.roofDecal) setUserDecal(updated.roofDecal);
           }}
           initialTab={homePageTab}
+          onlinePlayers={onlinePlayers}
+          pendingFriendRequests={pendingFriendRequests}
+          onSendFriendRequest={handleSendFriendRequest}
+          onAcceptFriendRequest={handleAcceptFriendRequest}
+          onDeclineFriendRequest={handleDeclineFriendRequest}
+          onInviteFriend={handleInviteFriend}
+          myFriendCode={myFriendCode}
+          activeRooms={lobbyInfo.activeRooms}
+          onSpectateRoom={(targetRoomId, targetMode) => {
+            handleJoinGame(
+              profileRef.current.name,
+              profileRef.current.color,
+              profileRef.current.tankClass,
+              targetMode || 'PUBLIC',
+              0,
+              targetRoomId,
+              true,
+              profileRef.current.team,
+              profileRef.current.skinId,
+              profileRef.current.bulletTrail,
+              profileRef.current.roofDecal,
+              matchType
+            );
+          }}
         />
 
         {/* Account Toast Banner */}
@@ -1943,6 +2244,10 @@ export default function App() {
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
+        onWheel={(e) => {
+          // Ammo switching is locked during life; re-select upon respawn
+          if (e.ctrlKey || isSpectator) return;
+        }}
       >
         <GameCanvas
           myPlayerId={myPlayerId}
@@ -2233,10 +2538,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    sounds.stopBgm();
-                    setIsInGame(false);
-                  }}
+                  onClick={handleExitGame}
                   className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-4 py-1.5 text-xs font-mono font-bold cursor-pointer"
                 >
                   Rời Trận / Về Sảnh
@@ -2730,14 +3032,30 @@ export default function App() {
               </div>
             )}
 
-            {/* BOTTOM-CENTER: Tactical Skill Bar HUD for Desktop Keyboard */}
+            {/* BOTTOM-CENTER: Tactical Ammo Selector & Skill Bar HUD for Desktop Keyboard */}
             <div className={`hidden md:block absolute left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-in fade-in duration-200 ${
-              isShortLandscape ? "bottom-1 scale-75 sm:scale-85 origin-bottom" : "bottom-4 slide-in-from-bottom-3"
+              isShortLandscape ? "bottom-1 scale-75 sm:scale-85 origin-bottom" : "bottom-3 slide-in-from-bottom-3"
             }`}>
-              <SkillBarHUD
+              <div className="flex flex-col items-center gap-1.5 pointer-events-none">
+                <BulletModeSelector
+                  myTank={myTank}
+                  onSwitchAmmo={handleSwitchAmmo}
+                  isMobile={false}
+                />
+                <SkillBarHUD
+                  myTank={myTank}
+                  onUseSkill={handleUseSkill}
+                  onUpgradeSkill={handleUpgradeSkill}
+                />
+              </div>
+            </div>
+
+            {/* MOBILE TOP-CENTER: Compact Bullet Mode Selector for Mobile */}
+            <div className="md:hidden absolute top-12 left-1/2 -translate-x-1/2 z-20 pointer-events-none w-full px-2 max-w-sm flex justify-center">
+              <BulletModeSelector
                 myTank={myTank}
-                onUseSkill={handleUseSkill}
-                onUpgradeSkill={handleUpgradeSkill}
+                onSwitchAmmo={handleSwitchAmmo}
+                isMobile={true}
               />
             </div>
 
@@ -2750,6 +3068,7 @@ export default function App() {
                 setAimMode(nextMode);
                 sounds.playPowerUp();
               }}
+              onSwitchAmmo={handleSwitchAmmo}
               onUseSkill={handleUseSkill}
               onUpgradeSkill={handleUpgradeSkill}
               onRecall={handleRecall}
@@ -2789,6 +3108,8 @@ export default function App() {
                 onRespawn={handleRespawn}
                 kills={myTank.kills}
                 score={myTank.score}
+                currentAmmo={myTank.selectedAmmo}
+                hasOtherAliveTanks={tanks.some((t) => t.id !== myPlayerId && !t.isDead)}
                 onSwitchToSpectator={() => handleToggleSpectator(true)}
               />
             )}
@@ -2860,6 +3181,9 @@ export default function App() {
         myPlayerColor={profileRef.current.color}
         myTankClass={profileRef.current.tankClass}
         myRankRp={playerRankRp}
+        myFriendCode={myFriendCode}
+        onlinePlayers={onlinePlayers}
+        pendingRequests={pendingFriendRequests}
         onJoinFriendRoom={(friendRoomId, friendMode) => {
           handleJoinGame(
             profileRef.current.name,
@@ -2876,7 +3200,81 @@ export default function App() {
             matchType
           );
         }}
+        onSpectateFriendRoom={(friendRoomId, friendMode) => {
+          handleJoinGame(
+            profileRef.current.name,
+            profileRef.current.color,
+            profileRef.current.tankClass,
+            friendMode || 'PUBLIC',
+            0,
+            friendRoomId,
+            true,
+            profileRef.current.team,
+            profileRef.current.skinId,
+            profileRef.current.bulletTrail,
+            profileRef.current.roofDecal,
+            matchType
+          );
+        }}
+        onSendFriendRequest={handleSendFriendRequest}
+        onAcceptFriendRequest={handleAcceptFriendRequest}
+        onDeclineFriendRequest={handleDeclineFriendRequest}
+        onInviteFriend={handleInviteFriend}
       />
+
+      {/* Floating Incoming Match Invite Popup */}
+      {incomingFriendInvite && (
+        <div className="fixed top-4 right-4 z-70 max-w-sm w-full bg-slate-900/95 border-2 border-amber-400 rounded-2xl p-3 shadow-2xl backdrop-blur-md animate-in slide-in-from-top-4 duration-300">
+          <div className="flex items-start gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+              <Trophy className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-mono font-bold text-white flex items-center justify-between">
+                <span>LỜI MỜI VÀO TRẬN ĐẤU</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                  {incomingFriendInvite.matchType === 'RANKED' ? 'ĐẤU RANK 🏆' : 'ĐẤU THƯỜNG 🎮'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 font-mono mt-0.5 truncate">
+                <strong className="text-sky-300">{incomingFriendInvite.senderName}</strong> mời bạn tham chiến!
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleJoinGame(
+                      profileRef.current.name,
+                      profileRef.current.color,
+                      profileRef.current.tankClass,
+                      incomingFriendInvite.mode,
+                      0,
+                      incomingFriendInvite.roomId,
+                      false,
+                      profileRef.current.team,
+                      profileRef.current.skinId,
+                      profileRef.current.bulletTrail,
+                      profileRef.current.roofDecal,
+                      incomingFriendInvite.matchType
+                    );
+                    setIncomingFriendInvite(null);
+                  }}
+                  className="flex-1 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                >
+                  Vào Ngay
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncomingFriendInvite(null)}
+                  className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white font-mono text-xs rounded-lg transition-colors cursor-pointer"
+                >
+                  Từ Chối
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

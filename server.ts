@@ -16,6 +16,8 @@ import {
   TankClass,
   QueueMatchedPlayer,
   Team,
+  OnlinePlayerInfo,
+  GameMode,
 } from './src/types/game';
 
 dotenv.config();
@@ -127,6 +129,19 @@ async function startServer() {
   // Track socket to room & player ID
   const socketRooms = new Map<WebSocket, string>();
   const socketPlayers = new Map<WebSocket, string>();
+
+  interface ConnectedPlayerProfile {
+    playerId: string;
+    friendCode: string;
+    name: string;
+    color: string;
+    tankClass: TankClass;
+    rankRp: number;
+    rankTier: RankTier;
+    currentMode?: GameMode;
+    roomId?: string;
+  }
+  const connectedProfiles = new Map<WebSocket, ConnectedPlayerProfile>();
 
   // ==========================================
   // 6-PLAYER 3V3 MATCHMAKING QUEUE (CASUAL & RANKED)
@@ -283,45 +298,66 @@ async function startServer() {
   }, 1000);
 
   function getLobbyStatePayload(): ServerMessage {
-    const publicRoom = rooms.get('public');
+    const publicRooms = [rooms.get('public'), rooms.get('public_user')];
     const publicPlayers: any[] = [];
-    if (publicRoom) {
-      for (const tank of publicRoom.game.getTanks().values()) {
-        if (!tank.isBot) {
-          publicPlayers.push({
-            id: tank.id,
-            name: tank.name,
-            color: tank.color,
-            tankClass: tank.tankClass,
-            kills: tank.kills,
-            score: tank.score,
-            rankTier: tank.rankTier,
-            rankRp: tank.rankRp,
-          });
+    const seenPids = new Set<string>();
+    for (const pRoom of publicRooms) {
+      if (pRoom) {
+        for (const tank of pRoom.game.getTanks().values()) {
+          if (!tank.isBot && !seenPids.has(tank.id)) {
+            seenPids.add(tank.id);
+            publicPlayers.push({
+              id: tank.id,
+              name: tank.name,
+              color: tank.color,
+              tankClass: tank.tankClass,
+              kills: tank.kills,
+              score: tank.score,
+              rankTier: tank.rankTier,
+              rankRp: tank.rankRp,
+            });
+          }
         }
       }
     }
 
-    const customRoomsList: any[] = [];
+    const allRoomsSummaryList: any[] = [];
     for (const [rId, room] of rooms) {
-      if (room.isCustomAI && !rId.startsWith('ai_')) {
-        let humanCount = 0;
-        let botCount = 0;
-        for (const t of room.game.getTanks().values()) {
-          if (t.isBot) botCount++;
-          else humanCount++;
-        }
-        customRoomsList.push({
-          id: rId,
-          name: rId.replace(/^(custom_|phong_|boss_|tdm_|br_)/, 'PHÒNG-').toUpperCase(),
-          playerCount: humanCount,
-          botCount,
-          hasBoss: !!room.game.getBoss()?.isAlive,
-          mode: room.game.getMode ? room.game.getMode() : 'PUBLIC',
-          weather: room.game.getWeather ? room.game.getWeather() : 'RAIN',
-        });
+      if (rId.startsWith('ai_')) continue;
+      let humanCount = 0;
+      let botCount = 0;
+      for (const t of room.game.getTanks().values()) {
+        if (t.isBot) botCount++;
+        else humanCount++;
       }
+      let displayName = rId;
+      if (rId === 'public' || rId === 'public_user') displayName = 'Phòng Public FFA (Người Thật)';
+      else if (rId === 'public_ai') displayName = 'Phòng Public (Bot AI)';
+      else if (rId === 'ranked_public') displayName = 'Đấu Rank Public';
+      else if (rId === 'ranked_tdm') displayName = 'Đấu Rank 3v3';
+      else if (rId === 'tdm') displayName = 'Đấu Thường 3v3';
+      else if (rId === 'br' || rId === 'ranked_br') displayName = 'Sinh Tồn Vòng Bo';
+      else if (rId === 'boss') displayName = 'Đại Chiến Boss Leviathan';
+      else if (rId.startsWith('match_ranked_')) displayName = 'Trận Đấu Rank 3v3';
+      else if (rId.startsWith('match_casual_')) displayName = 'Trận Đấu Thường 3v3';
+      else displayName = rId.replace(/^(custom_|phong_|boss_|tdm_|br_)/, 'PHÒNG-').toUpperCase();
+
+      allRoomsSummaryList.push({
+        id: rId,
+        name: displayName,
+        playerCount: humanCount,
+        botCount,
+        hasBoss: !!room.game.getBoss()?.isAlive,
+        mode: room.game.getMode ? room.game.getMode() : 'PUBLIC',
+        matchType: rId.includes('ranked') ? 'RANKED' : 'CASUAL',
+        weather: room.game.getWeather ? room.game.getWeather() : 'RAIN',
+      });
     }
+
+    // Filter custom rooms for CustomRoomModal: custom rooms created or rooms with people
+    const customRoomsList = allRoomsSummaryList.filter(
+      (r) => r.id.startsWith('custom_') || r.id.startsWith('phong_') || r.playerCount > 0
+    );
 
     return {
       type: 'LOBBY_STATE',
@@ -329,7 +365,47 @@ async function startServer() {
       publicOnlineCount: publicPlayers.length,
       publicPlayers,
       customRooms: customRoomsList,
+      activeRooms: allRoomsSummaryList,
+      onlinePlayers: getAllOnlinePlayers(),
     };
+  }
+
+  function getAllOnlinePlayers(): OnlinePlayerInfo[] {
+    const list: OnlinePlayerInfo[] = [];
+    for (const [clientWs, prof] of connectedProfiles) {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        const curRoomId = socketRooms.get(clientWs);
+        const curRoom = curRoomId ? rooms.get(curRoomId) : undefined;
+        const isInBattle = !!curRoomId && (!curRoom?.isCustomAI || curRoom.clients.size > 0);
+        list.push({
+          id: prof.playerId,
+          friendCode: prof.friendCode,
+          name: prof.name,
+          color: prof.color,
+          tankClass: prof.tankClass,
+          rankRp: prof.rankRp,
+          rankTier: prof.rankTier,
+          status: isInBattle ? 'IN_BATTLE' : 'ONLINE',
+          currentMode: prof.currentMode,
+          roomId: curRoomId,
+        });
+      }
+    }
+    return list;
+  }
+
+  function broadcastOnlinePlayers() {
+    const players = getAllOnlinePlayers();
+    const msg: ServerMessage = {
+      type: 'ONLINE_PLAYERS_UPDATE',
+      players,
+    };
+    const data = JSON.stringify(msg);
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    }
   }
 
   function broadcastLobbyState() {
@@ -357,9 +433,22 @@ async function startServer() {
     const playerId = `p_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     socketPlayers.set(ws, playerId);
 
+    // Initial default profile for connected socket
+    connectedProfiles.set(ws, {
+      playerId,
+      friendCode: `DLAND-${Math.floor(1000 + Math.random() * 9000)}`,
+      name: 'Chiến Binh',
+      color: '#3b82f6',
+      tankClass: 'STRIKER',
+      rankRp: 850,
+      rankTier: 'GOLD',
+      currentMode: 'PUBLIC',
+    });
+
     // Send real-time lobby stats immediately upon connection
     ws.send(JSON.stringify(getLobbyStatePayload()));
     broadcastLobbyState();
+    broadcastOnlinePlayers();
 
     ws.on('message', (raw: string) => {
       try {
@@ -452,7 +541,8 @@ async function startServer() {
                 msg.roofDecal,
                 msg.matchType,
                 msg.rankTier,
-                msg.rankRp
+                msg.rankRp,
+                msg.initialAmmo
               );
             }
 
@@ -464,6 +554,17 @@ async function startServer() {
             };
             ws.send(JSON.stringify(initPayload));
 
+            const prof = connectedProfiles.get(ws);
+            if (prof) {
+              prof.name = msg.name || prof.name;
+              prof.color = msg.color || prof.color;
+              prof.tankClass = msg.tankClass || prof.tankClass;
+              if (typeof msg.rankRp === 'number') prof.rankRp = msg.rankRp;
+              if (msg.rankTier) prof.rankTier = msg.rankTier;
+              prof.currentMode = mode;
+              prof.roomId = targetRoomId;
+            }
+            broadcastOnlinePlayers();
             broadcastLobbyState();
             break;
           }
@@ -499,6 +600,16 @@ async function startServer() {
               if (msg.skillTrigger) {
                 currentRoom.game.useSkill(playerId, msg.skillTrigger);
               }
+              if (msg.selectedAmmo) {
+                currentRoom.game.switchAmmo(playerId, msg.selectedAmmo);
+              }
+            }
+            break;
+          }
+
+          case 'SWITCH_AMMO': {
+            if (currentRoom && msg.ammoType) {
+              currentRoom.game.switchAmmo(playerId, msg.ammoType);
             }
             break;
           }
@@ -519,7 +630,7 @@ async function startServer() {
 
           case 'RESPAWN': {
             if (currentRoom) {
-              currentRoom.game.respawnPlayer(playerId);
+              currentRoom.game.respawnPlayer(playerId, msg.ammoType);
             }
             break;
           }
@@ -670,6 +781,99 @@ async function startServer() {
             }
             break;
           }
+
+          case 'REGISTER_PROFILE': {
+            const cur = connectedProfiles.get(ws) || {
+              playerId,
+              friendCode: msg.friendCode || `DLAND-${Math.floor(1000 + Math.random() * 9000)}`,
+              name: msg.name || 'Chiến Binh',
+              color: msg.color || '#3b82f6',
+              tankClass: msg.tankClass || 'STRIKER',
+              rankRp: msg.rankRp || 850,
+              rankTier: msg.rankTier || 'GOLD',
+              currentMode: msg.currentMode,
+            };
+            if (msg.friendCode) cur.friendCode = msg.friendCode;
+            if (msg.name) cur.name = msg.name;
+            if (msg.color) cur.color = msg.color;
+            if (msg.tankClass) cur.tankClass = msg.tankClass;
+            if (typeof msg.rankRp === 'number') cur.rankRp = msg.rankRp;
+            if (msg.rankTier) cur.rankTier = msg.rankTier;
+            if (msg.currentMode) cur.currentMode = msg.currentMode;
+            connectedProfiles.set(ws, cur);
+            broadcastOnlinePlayers();
+            broadcastLobbyState();
+            break;
+          }
+
+          case 'FRIEND_REQUEST': {
+            let targetWs: WebSocket | undefined;
+            for (const [cWs, prof] of connectedProfiles) {
+              if (
+                (msg.targetFriendCode && prof.friendCode.toUpperCase() === msg.targetFriendCode.toUpperCase()) ||
+                (msg.targetPlayerId && prof.playerId === msg.targetPlayerId)
+              ) {
+                targetWs = cWs;
+                break;
+              }
+            }
+            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+              const notifyMsg: ServerMessage = {
+                type: 'FRIEND_REQUEST_RECEIVED',
+                from: msg.sender,
+              };
+              targetWs.send(JSON.stringify(notifyMsg));
+            }
+            break;
+          }
+
+          case 'FRIEND_ACCEPT': {
+            let targetWs: WebSocket | undefined;
+            for (const [cWs, prof] of connectedProfiles) {
+              if (
+                (msg.targetFriendCode && prof.friendCode.toUpperCase() === msg.targetFriendCode.toUpperCase()) ||
+                (msg.targetPlayerId && prof.playerId === msg.targetPlayerId)
+              ) {
+                targetWs = cWs;
+                break;
+              }
+            }
+            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+              const acceptMsg: ServerMessage = {
+                type: 'FRIEND_REQUEST_ACCEPTED',
+                from: msg.sender,
+              };
+              targetWs.send(JSON.stringify(acceptMsg));
+            }
+            break;
+          }
+
+          case 'FRIEND_INVITE': {
+            let targetWs: WebSocket | undefined;
+            for (const [cWs, prof] of connectedProfiles) {
+              if (
+                (msg.targetFriendCode && prof.friendCode.toUpperCase() === msg.targetFriendCode.toUpperCase()) ||
+                (msg.targetPlayerId && prof.playerId === msg.targetPlayerId)
+              ) {
+                targetWs = cWs;
+                break;
+              }
+            }
+            if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+              const inviteMsg: ServerMessage = {
+                type: 'FRIEND_INVITE_RECEIVED',
+                from: {
+                  senderId: playerId,
+                  senderName: msg.senderName,
+                  matchType: msg.matchType,
+                  roomId: msg.roomId,
+                  mode: msg.mode,
+                },
+              };
+              targetWs.send(JSON.stringify(inviteMsg));
+            }
+            break;
+          }
         }
       } catch (err) {
         console.error('Error handling WS message:', err);
@@ -696,6 +900,8 @@ async function startServer() {
       }
       socketRooms.delete(ws);
       socketPlayers.delete(ws);
+      connectedProfiles.delete(ws);
+      broadcastOnlinePlayers();
       broadcastLobbyState();
     };
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Crosshair, Zap, Shield, Disc, Flame, Target, RotateCcw, Heart, Plus } from 'lucide-react';
-import { PlayerTank, SkillType } from '../types/game';
+import { PlayerTank, SkillType, BulletModifier, AMMO_TYPES, AMMO_CONFIGS } from '../types/game';
 import { haptics } from '../utils/haptics';
 import { sounds } from '../utils/audio';
 
@@ -13,6 +13,7 @@ interface VirtualJoystickProps {
   myTank?: PlayerTank | null;
   aimMode?: 'MOVEMENT' | 'MOUSE';
   onToggleAimMode?: () => void;
+  onSwitchAmmo?: (type: BulletModifier) => void;
   onRecall?: () => void;
   onQuickHeal?: () => void;
   onSignalPing?: (type: 'ATTACK' | 'RETREAT' | 'GATHER') => void;
@@ -28,6 +29,7 @@ export const VirtualJoystick: React.FC<VirtualJoystickProps> = ({
   myTank,
   aimMode = 'MOVEMENT',
   onToggleAimMode,
+  onSwitchAmmo,
   onRecall,
   onQuickHeal,
 }) => {
@@ -601,6 +603,45 @@ export const VirtualJoystick: React.FC<VirtualJoystickProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* =========================================================
+              NÚT CHUYỂN ĐỔI LOẠI ĐẠN (QUICK AMMO SWITCH) - CHO MOBILE
+             ========================================================= */}
+          {onSwitchAmmo && myTank && (
+            <button
+              type="button"
+              onTouchStart={(e) => {
+                e.preventDefault();
+                const cur = myTank.selectedAmmo || 'STANDARD';
+                const curIdx = AMMO_TYPES.indexOf(cur);
+                const nextIdx = (curIdx + 1) % AMMO_TYPES.length;
+                onSwitchAmmo(AMMO_TYPES[nextIdx]);
+                haptics.light();
+                sounds.playPowerUp();
+              }}
+              onClick={() => {
+                const cur = myTank.selectedAmmo || 'STANDARD';
+                const curIdx = AMMO_TYPES.indexOf(cur);
+                const nextIdx = (curIdx + 1) % AMMO_TYPES.length;
+                onSwitchAmmo(AMMO_TYPES[nextIdx]);
+                haptics.light();
+                sounds.playPowerUp();
+              }}
+              className="absolute -left-9 top-6 w-11 h-11 sm:w-12 sm:h-12 rounded-full border-2 transition-all cursor-pointer flex flex-col items-center justify-center shadow-xl active:scale-90 bg-slate-950/95"
+              style={{
+                borderColor: AMMO_CONFIGS[myTank.selectedAmmo || 'STANDARD'].color,
+                boxShadow: `0 0 14px ${AMMO_CONFIGS[myTank.selectedAmmo || 'STANDARD'].color}50`,
+              }}
+              title="Chạm để đổi loại đạn pháo"
+            >
+              <span className="text-base leading-none">
+                {AMMO_CONFIGS[myTank.selectedAmmo || 'STANDARD'].icon}
+              </span>
+              <span className="text-[8.5px] font-mono font-black text-white leading-none mt-0.5">
+                {myTank.ammoInventory?.[myTank.selectedAmmo || 'STANDARD'] ?? 0}
+              </span>
+            </button>
           )}
 
           {/* =========================================================
